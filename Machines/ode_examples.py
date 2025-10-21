@@ -10,6 +10,7 @@ class OdeExample:
     def __init__(self, u0, t_begin=0.0, t_end=1.0):
         self.t_begin, self.t_end, self.u0 = t_begin, t_end, u0
         self.name = self.__class__.__name__
+        self.ncomp = 1 if isinstance(self.u0, float) else len(self.u0)
 
 #-------------------------------------------------------------
 class Exponential(OdeExample):
