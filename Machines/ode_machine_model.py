@@ -27,7 +27,7 @@ class MLP(nnx.Module):
         t = jnp.atleast_1d(t).reshape(-1, 1)
         t = self.normalize_t(t)
         for layer in self.feature_layers:
-            t = t+jnp.tanh(layer(t))
+            t = jnp.tanh(layer(t))
         return t.T.squeeze()
     def basis_t(self, t):
         dphi_dt_single = lambda ti: jax.jacrev(self.basis)(ti).squeeze()
@@ -41,7 +41,7 @@ class MLP(nnx.Module):
         print(f"{M.shape=}")
         r1 = jnp.sum(M, axis=0)
         if level==0: return  jnp.mean(r1 ** 2)
-        r2 = M.T@M - jnp.eye(M.shape[1])
+        r2 = M@M.T - jnp.eye(M.shape[0])
         if level==1: return  jnp.mean(r1 ** 2) + 0.01*jnp.mean(r2 ** 2)
         N = self.basis_t(t_colloc)
         r3 = N@N.T - jnp.eye(N.shape[0])
@@ -73,8 +73,8 @@ def solve_ode(app, layers, n_colloc, return_basis=False):
     machine = MLP(layers, key, model.t_colloc)
     if return_basis: base0 = machine.basis(model.t_colloc).T
     def ode_loss(machine_tmp):
-        ode_res = jnp.mean(model.residual_ode(machine_tmp))**2
-        bc_loss = jnp.mean(model.residual_bc(machine_tmp))**2
+        ode_res = jnp.mean(model.residual_ode(machine_tmp)**2)
+        bc_loss = jnp.mean(model.residual_bc(machine_tmp)**2)
         return ode_res + bc_loss+ 0.5 * machine_tmp.regularization_basis(model.t_colloc,level=0)
     trained_machine = training.train_machine_and_solve(machine, ode_loss)
     if return_basis:
@@ -89,8 +89,8 @@ if __name__ == '__main__':
     # app, layers, n_colloc = ode_examples.Exponential(), [23,23], 24
     # app, layers, n_colloc = ode_examples.Pendulum(t_end=4), [24,24], 25
     # app, layers, n_colloc = ode_examples.Pendulum(t_end=5, is_linear=False), [24,24], 25
-    app, layers, n_colloc = ode_examples.Logistic(), [8,8], 10
-    # app, layers, n_colloc = ode_examples.ExponentialJordan(t_end=10, lam=-0.2), [32,32], 100
+    # app, layers, n_colloc = ode_examples.Logistic(), [8,8], 10
+    app, layers, n_colloc = ode_examples.ExponentialJordan(t_end=10, lam=-0.2), [32,32], 100
 
     layers = [1,*layers, app.ncomp]
 
@@ -98,15 +98,15 @@ if __name__ == '__main__':
     if allinone:
         trained_machine, model, base0, base1 = solve_ode(app, layers, n_colloc, return_basis=True)
     else:
-        machine = MLP(layers, jax.random.PRNGKey(0), t_colloc=jnp.linspace(0, 1, 10))
         model = ModelOde(app, n_colloc)
+        machine = MLP(layers, jax.random.PRNGKey(0), t_colloc=model.t_colloc)
         def machine_loss(machine_tmp):
             return machine_tmp.regularization_basis(model.t_colloc,level=1)
         machine = training.train_features(machine, machine_loss)
         base0 = machine.basis(model.t_colloc).T
         def ode_loss(machine_tmp):
-            ode_res = jnp.mean(model.residual_ode(machine_tmp)) ** 2
-            bc_loss = jnp.mean(model.residual_bc(machine_tmp)) ** 2
+            ode_res = jnp.mean(model.residual_ode(machine_tmp)** 2)
+            bc_loss = jnp.mean(model.residual_bc(machine_tmp)** 2)
             return ode_res + bc_loss
         trained_machine = training.solve_coefficients(machine, ode_loss)
         base1 = trained_machine.basis(model.t_colloc).T
