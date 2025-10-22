@@ -84,7 +84,7 @@ def train_features(machine, machine_loss, n_epochs=101, lr=0.01):
     trained_machine = nnx.merge(graphdef, params_full, batch_stats)
     return trained_machine
 #-----------------------------
-def solve_coefficients(machine, ode_loss, n_epochs=400, lr=1.0):
+def solve_coefficients(machine, ode_loss, n_epochs=400, lr=0.1):
     """
     Train only the final layer (coefficients) of the machine
     to satisfy the collocated ODE residual.

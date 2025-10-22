@@ -1,6 +1,5 @@
 import jax.numpy as jnp
 import jax
-import optax
 from flax import nnx
 import training
 
@@ -42,6 +41,7 @@ class MLP(nnx.Module):
         r1 = jnp.sum(M, axis=0)
         if level==0: return  jnp.mean(r1 ** 2)
         r2 = M@M.T - jnp.eye(M.shape[0])
+        # r2 = M.T@M - jnp.eye(M.shape[1])
         if level==1: return  jnp.mean(r1 ** 2) + 0.01*jnp.mean(r2 ** 2)
         N = self.basis_t(t_colloc)
         r3 = N@N.T - jnp.eye(N.shape[0])
@@ -94,20 +94,26 @@ if __name__ == '__main__':
 
     layers = [1,*layers, app.ncomp]
 
-    allinone = False
+    key = jax.random.PRNGKey(34)
+    model = ModelOde(app, n_colloc)
+    machine = MLP(layers, key, model.t_colloc)
+    def ode_loss(machine_tmp):
+        ode_res = jnp.mean(model.residual_ode(machine_tmp) ** 2)
+        bc_loss = jnp.mean(model.residual_bc(machine_tmp) ** 2)
+        return ode_res + bc_loss
+    def machine_loss(machine_tmp):
+        return machine_tmp.regularization_basis(model.t_colloc, level=1)
+    allinone = True
     if allinone:
-        trained_machine, model, base0, base1 = solve_ode(app, layers, n_colloc, return_basis=True)
+        # machine = training.train_features(machine, machine_loss)
+        base0 = machine.basis(model.t_colloc).T
+        def ode_loss_all(machine_tmp):
+            return ode_loss(machine_tmp)+machine_loss(machine_tmp)
+        trained_machine = training.train_machine_and_solve(machine, ode_loss)
+        base1 = trained_machine.basis(model.t_colloc).T
     else:
-        model = ModelOde(app, n_colloc)
-        machine = MLP(layers, jax.random.PRNGKey(0), t_colloc=model.t_colloc)
-        def machine_loss(machine_tmp):
-            return machine_tmp.regularization_basis(model.t_colloc,level=1)
         machine = training.train_features(machine, machine_loss)
         base0 = machine.basis(model.t_colloc).T
-        def ode_loss(machine_tmp):
-            ode_res = jnp.mean(model.residual_ode(machine_tmp)** 2)
-            bc_loss = jnp.mean(model.residual_bc(machine_tmp)** 2)
-            return ode_res + bc_loss
         trained_machine = training.solve_coefficients(machine, ode_loss)
         base1 = trained_machine.basis(model.t_colloc).T
 
