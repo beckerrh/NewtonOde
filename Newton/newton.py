@@ -5,6 +5,9 @@ Created on Mon Dec  5 15:38:16 2016
 
 @author: becker
 """
+import os
+os.environ["BACKEND"] = 'jax'
+
 from backend import np
 import newtondata, utils
 
@@ -14,9 +17,8 @@ class Newton:
         self.computedx = kwargs.pop('computedx', None)
         self.verbose = kwargs.pop('verbose', True)
         self.verbose_bt = kwargs.pop('verbose_bt', False)
-        self.F = kwargs.pop('F', None)
-        self.dF = kwargs.pop('dF', None)
-        if not self.computedx:  assert self.dF
+        self.nd = kwargs.pop('nd', None)
+        if not self.computedx:  assert self.nd.dF
         self.sdata = kwargs.pop('sdata', newtondata.StoppingParamaters())
         self.iterdata = kwargs.pop('iterdata', newtondata.IterationData())
         self.name = 'newton'
@@ -26,47 +28,62 @@ class Newton:
         self.printer = utils.Printer(verbose=self.verbose, types=printformat)
 
     #----------------------------------------------------------------------
-    def backtracking(self, x0, dx, meritvalue, meritgrad):
+    def backtracking(self, x0, dx, meritfirst, meritgrad):
         maxiter, omega, c = self.sdata.bt_maxiter, self.sdata.bt_omega, self.sdata.bt_c
-        step = 1
+        step = 1.0
         x = x0 + step*dx
-        res = self.F(x)
-        meritnew = 0.5*np.sum(res*res)
-        resnorm = np.sqrt(2*meritnew)
-        resfirst = np.sqrt(2*meritvalue)
+        res = self.nd.F(x)
+        meritnew = 0.5*np.sum(res**2)
+        resnorm = np.sqrt(2.0*meritnew)
         it = 0
         if self.verbose_bt:
-            print("{} {:>3} {:^10} {:^10}  {:^9}".format("bt", "it", "resnorm", "resfirst", "step"))
-            print(f"bt {it:3} {resnorm:10.3e} {resfirst:10.3e} {step:9.2e}")
-        while meritnew > meritvalue + c*step*meritgrad and it<maxiter:
+            print("{} {:>3} {:^10} {:^10}  {:^9}".format("bt", "it", "meritnew", "meritfirst", "step"))
+            print(f"bt {it:3} {meritnew:10.3e} {meritfirst:10.3e} {step:9.2e}")
+        # print(f"{x=} {meritgrad=}")
+        while meritnew > meritfirst + c*step*meritgrad and it<maxiter:
             it += 1
             step *= omega
             x = x0 + step * dx
-            res = self.F(x)
-            resnorm = np.linalg.norm(res)
+            res = self.nd.F(x)
+            meritnew = 0.5 * np.sum(res**2)
+            resnorm = np.sqrt(2 * meritnew)
             if self.verbose_bt:
-                print(f"bt {it:3} {resnorm:10.3e} {resfirst:10.3e} {step:9.2e}")
+                print(f"bt {it:3} {meritnew:10.3e} {meritfirst:10.3e} {step:9.2e}")
         return x, res, resnorm, step, (it<maxiter), it
 
     #--------------------------------------------------------------------
+    def compute_residual(self, x):
+        result = self.nd.computeResidual(x)
+        res = result.residual
+        xnorm = result.xnorm
+        meritvalue = result.meritvalue
+        resnorm = result.resnorm
+        return res, resnorm, meritvalue, xnorm
+    # --------------------------------------------------------------------
     def solve(self, x0, maxiter=None):
         """
         Aims to solve f(x) = 0, starting at x0
         computedx: gets dx from f'(x) dx =  -f(x)
         if not given, jac is called and linalg.solve is used
         """
-        x0 = np.asarray(x0)
+        x0 = np.atleast_1d(x0)
         atol, rtol, atoldx, rtoldx = self.sdata.atol, self.sdata.rtol, self.sdata.atoldx, self.sdata.rtoldx
         divx = self.sdata.divx
         if maxiter is None: maxiter = self.sdata.maxiter
-        x = np.asarray(x0)
+        x = np.atleast_1d(x0)
         if not x.ndim == 1:
             raise ValueError(f"{x.shape=}")
+        # res, resnorm, meritvalue, xnorm = self.compute_residual(x)
+        # result = self.nd.computeResidual(x)
+        # res = result.residual
+        # xnorm = result.xnorm
+        # meritvalue = result.meritvalue
+        # resnorm = result.resnorm
+        #
         xnorm = np.linalg.norm(x)
-        res = self.F(x)
+        res = self.nd.F(x)
         meritvalue = 0.5*np.sum(res*res)
-        print(f"{meritvalue=} {res=}")
-        resnorm = np.sqrt(2*meritvalue)
+        resnorm = np.sqrt(2.0*meritvalue)
         self.iterdata.reset(resnorm)
 
         # print(f"@@@@--------- {np.linalg.norm(x)=} {resnorm=}")
@@ -83,7 +100,7 @@ class Newton:
                 return x, self.iterdata
             self.iterdata.tol_missing = tol/resnorm
             if not self.computedx:
-                J = np.atleast_2d(self.dF(x))
+                J = np.atleast_2d(self.nd.dF(x))
                 dx, liniter, success = np.linalg.solve(J, -res), 1, True
             else:
                 dx, liniter, success = self.computedx(-res, x, self.iterdata)
@@ -91,17 +108,24 @@ class Newton:
                 self.iterdata.success = False
                 self.iterdata.failure = 'linear solver did not converge'
                 return x, self.iterdata
-            assert dx.shape == x0.shape
             if np.linalg.norm(dx) < self.sdata.atoldx:
                 self.iterdata.success = False
                 self.iterdata.failure = 'correction too small'
                 return x, self.iterdata
+            meritvalue = 0.5 * np.sum(res * res)
             x, res, resnorm, step, btok, btit = self.backtracking(x, dx, meritvalue, -meritvalue)
             if not btok:
+                print(f"=======Gradient step======")
+                # self.verbose_bt = True
+                res = self.nd.F(x)
+                meritvalue = 0.5 * np.sum(res * res)
                 dx = -J.T@res
-                meritgrad = 0.5*np.sum(dx*dx)
-                x, res, resnorm, step, btok, btit2 = self.backtracking(x, dx, meritvalue, -meritgrad)
+                meritgrad = -np.sum(dx*dx)
+                bt_maxiter = self.sdata.bt_maxiter
+                self.sdata.bt_maxiter = 50
+                x, res, resnorm, step, btok, btit2 = self.backtracking(x, dx, meritvalue, meritgrad)
                 btit += btit2+1
+                self.sdata.bt_maxiter = bt_maxiter
                 if not btok:
                     self.iterdata.success = False
                     self.iterdata.failure = 'backtracking did not converge'
@@ -109,12 +133,6 @@ class Newton:
             dxnorm = np.linalg.norm(dx)
             self.iterdata.newstep(dxnorm, liniter, resnorm, step)
             xnorm = np.linalg.norm(x)
-            matsymb = ''
-            self.iterdata.bad_convergence = False
-            if self.iterdata.rhodx>self.sdata.rho_aimed:
-                self.iterdata.bad_convergence = True
-                self.iterdata.bad_convergence_count += 1
-                matsymb = 'M'
             self.printvalues['it'] = self.iterdata.iter
             self.printvalues['|r|'] = resnorm
             self.printvalues['|dx|'] = self.iterdata.dxnorm[-1]
@@ -126,7 +144,6 @@ class Newton:
             self.printer.print(self.printvalues)
             if resnorm<atol:
                 self.iterdata.success = True
-                # iterdata.failure = 'residual too small'
                 return x, self.iterdata
             if self.iterdata.iter == maxiter:
                 self.iterdata.success = False
@@ -149,24 +166,22 @@ if __name__ == '__main__':
         if issubclass(cls, test_problems.TestProblem) and cls is not test_problems.TestProblem:
             problems.append(cls)
     instances = [cls() for cls in problems]
-    problems = ["Powell_Singular"]
-    instances = [getattr(test_problems, name)() for name in problems]
+    # problems = ["Cubic_Inflection"]
+    # instances = [getattr(test_problems, name)() for name in problems]
     for instance in instances:
-        print(f"\n******* Testing {instance.name} *******\n")
-        newton = Newton(F=instance.F, dF=instance.dF)
-        info = newton.solve(instance.x0)
-
-    # f = lambda x: 10.0 * np.sin(2.0 * x) + 4.0 - x * x
-    # df = lambda x: 20.0 * np.cos(2.0 * x) - 2.0 * x
-    # f = lambda x: x**2 -11
-    # df = lambda x: 2.0 * x
-    # def computedx(r, x, info):
-    #     return r/df(x),1, True
-    # x0 = [3.]
-    # newton = Newton(df=df)
-    # info = newton.solve(x0, f)
-    # newton = Newton(computedx=computedx)
-    # info2 = newton.solve(x0, f)
-    # x = np.linspace(-1., 4.0)
-    # plt.plot(x, f(x), [x[0], x[-1]], [0,0], '--r')
-    # plt.show()
+        print(f"\n ---------- {instance.name} ----------")
+        nd = test_problems.NewtonDriverNumpy(test_problem=instance)
+        newton = Newton(nd=nd)
+        # newton.verbose_bt = True
+        xs, info = newton.solve(instance.x0, maxiter=50)
+        if not info.success:
+            print(f"@@@@@@@@@@@@@@@@ {info.failure}")
+        if xs.shape[0] ==1:
+            x0 = instance.x0
+            x = np.linspace(min(xs,x0)-2, max(xs,x0)+2)
+            plt.plot(x, nd.F(x), [x[0], x[-1]], [0, 0], '--r')
+            plt.plot(xs, nd.F(xs), 'Xk')
+            plt.plot(x0, nd.F(x0), 'Xg')
+            plt.title(instance.name)
+            plt.grid()
+            plt.show()

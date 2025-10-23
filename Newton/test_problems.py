@@ -2,6 +2,7 @@ import jax
 
 from backend import np
 import os
+from types import SimpleNamespace
 
 if os.getenv("BACKEND", "numpy").lower() == "jax":
     math = np
@@ -9,6 +10,20 @@ else:
     import sympy as sp
     math = sp
 
+#----------------------------------------------------------------------
+class NewtonDriverNumpy:
+    def __init__(self, **kwargs):
+        if 'test_problem' in kwargs:
+            test_problem = kwargs['test_problem']
+            self.F = test_problem.F
+            self.dF = test_problem.dF
+    def compute_residual(self, x):
+        xnorm = np.linalg.norm(x)
+        r = self.F(x)
+        meritvalue = 0.5*np.sum(r**2)
+        resnorm = np.sqrt(2.0*meritvalue)
+        result = SimpleNamespace(residual=r, meritvale=meritvalue, resnorm=resnorm, xnorm=xnorm)
+        return result
 
 #----------------------------------------------------------------------
 class TestProblem:
@@ -38,13 +53,21 @@ class TestProblem:
                 J = f.jacobian(x)
                 self.dF = sp.lambdify([x], J, 'numpy')
 
-class Simple_Quadratic: TestProblem(x0=3, F=lambda x:(x-1)**2, xS=1)
-class Cubic_Inflection: TestProblem(x0=0, F=lambda x:x**3-2*x+2)
-class Oscillatory: TestProblem(x0=1, F=lambda x:math.cos(x) + x)
-class Sine_Polynomial: TestProblem(x0=3, F=lambda x:10*math.sin(2*x) + 4 - x**2)
-class Exponential: TestProblem(x0=3, F=lambda x:math.exp(x)-10*x)
+class Simple_Quadratic(TestProblem):
+    def __init__(self): super().__init__(x0=3.0, F=lambda x:(x-1.0)**2, xS=1.0)
+
+class Cubic_Inflection(TestProblem):
+    def __init__(self): super().__init__(x0=0.0, F=lambda x:x**3-2.0*x+2.0)
+class Oscillatory(TestProblem):
+    def __init__(self): super().__init__(x0=1.0, F=lambda x:math.cos(x) + x)
+class Sine_Polynomial(TestProblem):
+    def __init__(self): super().__init__(x0=3.0, F=lambda x:10*math.sin(2*x) + 4.0 - x**2)
+class Exponential(TestProblem):
+    def __init__(self): super().__init__(x0=3.0, F=lambda x:math.exp(x)-10*x)
 #multiple roots
-class Rosenbrock: TestProblem(x0=[-1.2, 1.0], F=lambda x:np.array([10*(x[1]-x[0]**2), 1-x[0]]),
+class Rosenbrock(TestProblem):
+    def __init__(self):
+        super().__init__(x0=[-1.2, 1.0], F=lambda x:np.array([10*(x[1]-x[0]**2), 1-x[0]]),
                 xS=[1.0,1.0])
 #textbook example to test globalization strategies and handling of singular Jacobians
 class Powell_Singular(TestProblem):
@@ -66,23 +89,23 @@ class BroydenTridiag(TestProblem):
         xim1 = x_pad[:-2]
         xip1 = x_pad[2:]
         return (3.0 - 2.0 * xi) * xi - xim1 - 2.0 * xip1 + 1.0
-# class CircleExponential(TestProblem):
-#     def __init__(self, n = 10, a=1.0, b=1.0, c=1.0, d=-1.0, value=0.0):
-#         self.x0 = value * np.ones(n)
-#         self.a, self.b, self.c, self.d = a, b, c, d
-#         self.F = self.F_jax if os.getenv("BACKEND", "numpy").lower() == "jax" else self.F_np
-#         super().__init__()
-#     def F_jax(self, x):
-#         x_im1 = np.roll(x, 1)  # x_{i-1}, with x_0 <- x_n
-#         x_ip1 = np.roll(x, -1)  # x_{i+1}, with x_{n+1} <- x_1
-#         return self.a * math.exp(x) - self.b * x_im1 - self.c * x_ip1 + self.d
-#     def F_np(self, x):
-#         xlist = list(x)
-#         return [
-#             self.a * math.exp(xlist[i])
-#             - self.b * xlist[i - 1]  # cyclic i-1
-#             - self.c * xlist[(i + 1) % self.ncomp]  # cyclic i+1
-#             + self.d
-#             for i in range(self.ncomp)
-#         ]
+class CircleExponential(TestProblem):
+    def __init__(self, n = 10, a=1.0, b=1.0, c=1.0, d=-1.0, value=1.0):
+        self.x0 = value * np.ones(n)
+        self.a, self.b, self.c, self.d = a, b, c, d
+        self.F = self.F_jax if os.getenv("BACKEND", "numpy").lower() == "jax" else self.F_np
+        super().__init__()
+    def F_jax(self, x):
+        x_im1 = np.roll(x, 1)  # x_{i-1}, with x_0 <- x_n
+        x_ip1 = np.roll(x, -1)  # x_{i+1}, with x_{n+1} <- x_1
+        return self.a * math.exp(x) - self.b * x_im1 - self.c * x_ip1 + self.d
+    def F_np(self, x):
+        xlist = list(x)
+        return np.array([
+            self.a * math.exp(xlist[i])
+            - self.b * xlist[i - 1]  # cyclic i-1
+            - self.c * xlist[(i + 1) % self.ncomp]  # cyclic i+1
+            + self.d
+            for i in range(self.ncomp)
+        ])
 

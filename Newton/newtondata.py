@@ -12,18 +12,17 @@ class StoppingParamaters:
     def __repr__(self):
         return f"maxiter={self.maxiter} atol={self.atol} rtol={self.rtol}"
     def __init__(self, **kwargs):
-        self.maxiter = kwargs.pop('maxiter',20)
+        self.maxiter = kwargs.pop('maxiter',50)
         self.atol = kwargs.pop('atol',1e-12)
         self.rtol = kwargs.pop('rtol',1e-8)
         self.atoldx = kwargs.pop('atoldx',1e-12)
         self.rtoldx = kwargs.pop('rtoldx',1e-8)
         self.divx = kwargs.pop('divx',1e8)
-        self.rho_aimed = kwargs.pop('rho_aimed',0.1)
         self.firststep = 1.0
         self.steptype = kwargs.pop('steptype','backtracking')
         if 'nbase' in kwargs: self.nbase = kwargs.pop('nbase')
         self.bt_maxiter = kwargs.pop('bt_maxiter',20)
-        self.bt_omega = kwargs.pop('bt_omega',0.75)
+        self.bt_omega = kwargs.pop('bt_omega',0.5)
         self.bt_c = kwargs.pop('bt_c',0.1)
         self.maxter_stepsize = 5
 
