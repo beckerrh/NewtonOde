@@ -22,7 +22,7 @@ class StoppingParamaters:
         self.steptype = kwargs.pop('steptype','backtracking')
         if 'nbase' in kwargs: self.nbase = kwargs.pop('nbase')
         self.bt_maxiter = kwargs.pop('bt_maxiter',20)
-        self.bt_omega = kwargs.pop('bt_omega',0.5)
+        self.bt_omega = kwargs.pop('bt_omega',0.75)
         self.bt_c = kwargs.pop('bt_c',0.1)
         self.maxter_stepsize = 5
 

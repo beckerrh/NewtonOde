@@ -24,6 +24,7 @@ class Printer:
                 self.formats[k] = f"^{v}.2f"
             else:
                 self.formats[k] = f"^{v}.3e"
+        self.values = {k:k if v=='s' else 0 for k,v in types.items()}
 
     def print_names(self):
         if not self.verbose: return
@@ -34,7 +35,8 @@ class Printer:
             else: f += f"{k:^{v}}"
             first=False
         print(f)
-    def print(self, values):
+    def print(self):
+        values = self.values
         if not self.verbose: return
         fmt = ""
         first = True

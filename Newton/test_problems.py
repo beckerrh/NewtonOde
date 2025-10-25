@@ -17,13 +17,25 @@ class NewtonDriverNumpy:
             test_problem = kwargs['test_problem']
             self.F = test_problem.F
             self.dF = test_problem.dF
-    def compute_residual(self, x):
+    def computeResidual(self, x):
         xnorm = np.linalg.norm(x)
         r = self.F(x)
         meritvalue = 0.5*np.sum(r**2)
         resnorm = np.sqrt(2.0*meritvalue)
-        result = SimpleNamespace(residual=r, meritvale=meritvalue, resnorm=resnorm, xnorm=xnorm)
-        return result
+        return SimpleNamespace(residual=r, meritvalue=meritvalue, residual_norm=resnorm, x_norm=xnorm)
+    def computeUpdate(self, **kwargs):
+        r = kwargs['r']
+        x = kwargs['x']
+        J = np.atleast_2d(self.dF(x))
+        dx = np.linalg.solve(J, -r)
+        return SimpleNamespace(update=dx, update_norm=np.linalg.norm(dx), meritgrad=-np.sum(r**2))
+    def computeUpdateSimple(self, **kwargs):
+        r = kwargs['r']
+        x = kwargs['x']
+        J = np.atleast_2d(self.dF(x))
+        dx = -J.T @ r
+        return SimpleNamespace(update=dx, update_norm=np.linalg.norm(dx), meritgrad=-np.sum(dx**2))
+
 
 #----------------------------------------------------------------------
 class TestProblem:
