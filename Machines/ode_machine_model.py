@@ -83,14 +83,16 @@ def solve_ode(app, layers, n_colloc, return_basis=False):
     return trained_machine
 
 if __name__ == '__main__':
-    import plotting, ode_examples
+    from Utility import plotting
+    from ODE import ode_examples
+
     # app, layers, n_colloc = ode_examples.Exponential(), [3,3], 6
     # app, layers, n_colloc = ode_examples.Exponential(), [11,11], 12
     # app, layers, n_colloc = ode_examples.Exponential(), [23,23], 24
     # app, layers, n_colloc = ode_examples.Pendulum(t_end=4), [24,24], 25
     # app, layers, n_colloc = ode_examples.Pendulum(t_end=5, is_linear=False), [24,24], 25
     # app, layers, n_colloc = ode_examples.Logistic(), [8,8], 10
-    app, layers, n_colloc = ode_examples.ExponentialJordan(t_end=10, lam=-0.2), [32,32], 100
+    app, layers, n_colloc = ode_examples.ExponentialJordan(t_end=10, lam=-0.2), [32, 32], 100
 
     layers = [1,*layers, app.ncomp]
 
@@ -120,19 +122,19 @@ if __name__ == '__main__':
     t_plot = jnp.linspace(app.t_begin, app.t_end, 4 * n_colloc)
     u_mlp = trained_machine.forward_batch(t_plot)
 
-    plot_dict = {"u* vs. uh" : {'t_plot':t_plot, 'u_plot':{}}}
-    plot_dict["u* vs. uh"]['u_plot']['u_mlp'] = u_mlp
+    plot_dict = {"u* vs. uh" : {'x':t_plot, 'y':{}}}
+    plot_dict["u* vs. uh"]['y']['u_mlp'] = u_mlp
 
     if hasattr(app, 'solution'):
         u_true = app.solution(t_plot)
-        plot_dict["u* vs. uh"]['u_plot']['u*'] = u_true
-        plot_dict['e'] = {'t_plot': t_plot, 'u_plot': {}}
-        plot_dict['e']['u_plot']['e'] =  u_mlp - u_true
-        plot_dict['e']['u_plot']['abs(e)'] =  jnp.abs(u_mlp - u_true)
+        plot_dict["u* vs. uh"]['y']['u*'] = u_true
+        plot_dict['e'] = {'x': t_plot, 'y': {}}
+        plot_dict['e']['y']['e'] =  u_mlp - u_true
+        plot_dict['e']['y']['abs(e)'] =  jnp.abs(u_mlp - u_true)
 
-    plot_dict["bases_0"] = {'t_plot': model.t_colloc, 'u_plot': {'b': base0}, 'no_legend': True}
-    plot_dict["bases"] = {'t_plot': model.t_colloc, 'u_plot': {}, 'no_legend': True}
-    plot_dict["bases"]['u_plot']['b'] = base1
+    plot_dict["bases_0"] = {'x': model.t_colloc, 'y': {'b': base0}, 'no_legend': True}
+    plot_dict["bases"] = {'x': model.t_colloc, 'y': {}, 'no_legend': True}
+    plot_dict["bases"]['y']['b'] = base1
 
 
     plotting.plot_solutions(plot_dict)

@@ -1,8 +1,10 @@
 import jax.numpy as jnp
 import jax
+import numpy as np
 import optax
 from flax import nnx
-import plotting
+from Utility import plotting
+
 
 #-----------------------------------------------------------
 class MLP(nnx.Module):
@@ -94,4 +96,7 @@ t_plot = jnp.linspace(t0, t1, 200)
 u_pred = jax.vmap(trained_machine.forward)(t_plot)
 u_true = model.solution(t_plot)
 
-plotting.plot_solutions(t_plot, t_colloc, u_pred, u_true)
+pd = {'pinn': {}}
+pd['pinn']['x'] = t_plot
+pd['pinn']['y'] = {'true': u_true, 'pred': u_pred}
+plotting.plot_solutions(pd)

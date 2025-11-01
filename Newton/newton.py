@@ -8,25 +8,22 @@ Created on Mon Dec  5 15:38:16 2016
 import os
 os.environ["BACKEND"] = 'jax'
 
-from backend import np
-import newtondata, utils
+import newtondata
+from Utility import printer
 from types import SimpleNamespace
 
 #----------------------------------------------------------------------
 class Newton:
     def __init__(self, **kwargs):
-        self.computedx = kwargs.pop('computedx', None)
         self.verbose = kwargs.pop('verbose', True)
         self.verbose_bt = kwargs.pop('verbose_bt', False)
         self.nd = kwargs.pop('nd', None)
-        if not self.computedx:  assert self.nd.dF
         self.sdata = kwargs.pop('sdata', newtondata.StoppingParamaters())
         self.iterdata = kwargs.pop('iterdata', newtondata.IterationData())
         self.name = 'newton'
         if hasattr(self.sdata,'addname'): self.name += '_' + self.sdata.addname
         types = {self.name:'s', "it":'i', '|r|':'e', "|dx|":'e', "|x|":'e','rhodx':'f', 'rhor':'f', 'lin':'i', 'bt':'i', 'r':'f'}
-        # self.printvalues = {k:k if v=='s' else 0 for k,v in printformat.items()}
-        self.printer = utils.Printer(verbose=self.verbose, types=types)
+        self.printer = printer.Printer(verbose=self.verbose, types=types)
 
     #----------------------------------------------------------------------
     def backtracking(self, x0, dx, meritfirst, meritgrad, step=1.0):
@@ -39,7 +36,6 @@ class Newton:
             else:
                 step *= omega
             x = x0 + step * dx
-            # res, resnorm, meritnew, xnorm = self.computeResidual(x)
             residual_result = self.computeResidual(x)
             meritnew = residual_result.merit
             if self.verbose_bt:
@@ -64,9 +60,8 @@ class Newton:
     # --------------------------------------------------------------------
     def solve(self, x0, **kwargs):
         """
-        Aims to solve f(x) = 0, starting at x0
-        computedx: gets dx from f'(x) dx =  -f(x)
-        if not given, jac is called and linalg.solve is used
+        Aims to solve F(x) = 0, starting at x0
+        with backtracking Newton
         """
         x0 = np.atleast_1d(x0)
         atol, rtol, atoldx, rtoldx = self.sdata.atol, self.sdata.rtol, self.sdata.atoldx, self.sdata.rtoldx
@@ -80,7 +75,6 @@ class Newton:
         for iteration in range(maxiter):
             if iteration==0:
                 # for iteration>0 this is done in back-tracking
-                # res, resnorm, meritvalue, xnorm = self.computeResidual(x)
                 result = self.computeResidual(x)
                 res, resnorm, meritvalue, xnorm = result.r, result.rnorm, result.merit, result.xnorm
                 self.iterdata.reset(resnorm)
@@ -106,7 +100,7 @@ class Newton:
             dx = result.update
             dxnorm_old = getattr(self, 'dxnorm', xnorm)
             dxnorm = result.update_norm
-            gradient_iteration = (dxnorm>2*dxnorm_old)
+            gradient_iteration = iteration and (dxnorm>20.0*dxnorm_old)
             btit=0
             if not gradient_iteration:
                 meritgrad = result.meritgrad
@@ -122,18 +116,12 @@ class Newton:
                 print(f"=======Gradient step======")
                 result = self.computeResidual(x)
                 res, resnorm, meritvalue, xnorm = result.r, result.rnorm, result.merit, result.xnorm
-                # self.verbose_bt = True
                 result = self.nd.computeUpdateSimple(r=res, x=x, info=self.iterdata)
                 dx = result.update
                 dxnorm = result.update_norm
                 meritgrad = result.meritgrad
-                # res = self.nd.F(x)
-                # meritvalue = 0.5 * np.sum(res * res)
-                # dx = -J.T@res
-                # meritgrad = -np.sum(dx*dx)
                 bt_maxiter = self.sdata.bt_maxiter
                 self.sdata.bt_maxiter = 50
-                # x, res, resnorm, step, btok, btit2 = self.backtracking(x, dx, meritvalue, meritgrad)
                 step =  getattr(self, 'step_grad', 1.0)
                 btresult = self.backtracking(x, dx, meritvalue, meritgrad, step)
                 x = btresult.x
@@ -174,6 +162,7 @@ class Newton:
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+    from backend import np
     import test_problems, inspect
     problems = []
     for name, cls in inspect.getmembers(test_problems, inspect.isclass):
@@ -186,7 +175,7 @@ if __name__ == '__main__':
         print(f"\n ---------- {instance.name} ----------")
         nd = test_problems.NewtonDriverNumpy(test_problem=instance)
         newton = Newton(nd=nd)
-        newton.verbose_bt = True
+        # newton.verbose_bt = True
         xs, info = newton.solve(instance.x0, maxiter=50)
         if not info.success:
             print(f"@@@@@@@@@@@@@@@@ {info.failure}")
