@@ -103,7 +103,7 @@ def solve_coefficients(machine, ode_loss, n_epochs=400, lr=0.1):
     b0 = final_params['bias'].value    # shape (out_features,)
 
     # Flatten to 1D vector for optimizer
-    coeff_init = jnp.concatenate([W0.ravel(), b0.ravel()])
+    coeff_init = np.concatenate([W0.ravel(), b0.ravel()])
 
     # Helper to reconstruct full params tree with new coefficients
     def rebuild_params(coeff_vec):

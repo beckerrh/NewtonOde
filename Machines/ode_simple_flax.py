@@ -29,13 +29,13 @@ class MLP(nnx.Module):
             layer = nnx.Linear(in_dim, out_dim, rngs=nnx.Rngs(key))
             self.layers.append(layer)
     def normalize_t(self, t):
-        t_mean, t_std = jnp.mean(t_colloc), jnp.std(t_colloc)
+        t_mean, t_std = np.mean(t_colloc), np.std(t_colloc)
         return (t - t_mean) / t_std
     def forward(self, t):
-        t = jnp.array([t])
+        t = np.array([t])
         t = self.normalize_t(t)
         for layer in self.layers[:-1]:
-            t = jnp.tanh(layer(t))
+            t = np.tanh(layer(t))
         last_layer = self.layers[-1]
         return last_layer(t)[0]
     def dudt(self, t):
@@ -45,12 +45,12 @@ class MLP(nnx.Module):
     def residual_bc(self, t0):
         return (self.forward(t0)-1) **2
     def solution(self, t):
-        return jnp.exp(self.lam*t)
+        return np.exp(self.lam*t)
 
 
 # Points de collocation
 t0, t1, n_colloc = 0, 3, 10
-t_colloc = jnp.linspace(t0, t1, n_colloc)
+t_colloc = np.linspace(t0, t1, n_colloc)
 # Machine
 layers = [1, 8, 8, 1]
 key = jax.random.PRNGKey(33)
@@ -61,7 +61,7 @@ def loss(params):
     # ode loss
     machine_tmp = nnx.merge(graphdef, params, batch_stats)
     res = jax.vmap(machine_tmp.residual_ode_colloc)(t_colloc)
-    ode_loss = jnp.mean(res ** 2)
+    ode_loss = np.mean(res ** 2)
     # return ode_loss
     # Boundary conditions
     bc_loss = machine_tmp.residual_bc(t_colloc[0])
@@ -89,7 +89,7 @@ for epoch in range(n_epochs):
 
 trained_machine = nnx.merge(graphdef, params, batch_stats)
 # Visu
-t_plot = jnp.linspace(t0, t1, 200)
+t_plot = np.linspace(t0, t1, 200)
 u_pred = jax.vmap(trained_machine.forward)(t_plot)
 u_true = trained_machine.solution(t_plot)
 

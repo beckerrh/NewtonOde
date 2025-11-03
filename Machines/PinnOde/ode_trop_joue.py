@@ -42,25 +42,25 @@ class Machine:
         params = []
         for l in range(1, len(self.layers)):
             key, subkey = jax.random.split(key)
-            W = jax.random.normal(subkey, (self.layers[l], self.layers[l-1])) * jnp.sqrt(2 / self.layers[l-1])
-            b = jnp.zeros(self.layers[l])
+            W = jax.random.normal(subkey, (self.layers[l], self.layers[l-1])) * np.sqrt(2 / self.layers[l-1])
+            b = np.zeros(self.layers[l])
             params.append((W, b))
         return params
     def bases(self, params, t):
-        t = jnp.atleast_1d(t)   # shape (1,)
+        t = np.atleast_1d(t)   # shape (1,)
         x = t[None, :]          # shape (1, 1)
         for W, b in params[:-1]:
             # x = swish(W @ x + b[:, None])
-            x = jnp.tanh(W @ x + b[:, None])
+            x = np.tanh(W @ x + b[:, None])
         W, b = params[-1]
         return W @ x + b[:, None]
     def regularization(self, params, t_colloc):
         M = self.bases(params, t_colloc)
-        e = jnp.sum(M, axis=0)-1
+        e = np.sum(M, axis=0)-1
         # K = M.T @ M
-        # reg_gram = jnp.mean((K - jnp.eye(K.shape[0])) ** 2)
-        # M = jnp.minimum(M,0)
-        return jnp.mean(e ** 2)# + jnp.mean(M*M)# + reg_gram
+        # reg_gram = np.mean((K - np.eye(K.shape[0])) ** 2)
+        # M = np.minimum(M,0)
+        return np.mean(e ** 2)# + np.mean(M*M)# + reg_gram
 
 #==================================================================
 class ModelEdo:
@@ -68,13 +68,13 @@ class ModelEdo:
         self.app, self.machine = app, machine
         self.nbases = machine.layers[-1]
         self.nout = 1 if type(app.u0)==float else len(app.u0)
-        self.t_colloc =  jnp.linspace(app.t_begin, app.t_end, n_colloc)
+        self.t_colloc =  np.linspace(app.t_begin, app.t_end, n_colloc)
     def init_params(self):
         params_mach = self.machine.init_params()
         key = jax.random.PRNGKey(0)
         key, subkey = jax.random.split(key)
-        W = jax.random.normal(subkey, (self.nout, self.nbases)) * jnp.sqrt(2 / self.nbases)
-        b = jnp.zeros(self.nout)
+        W = jax.random.normal(subkey, (self.nout, self.nbases)) * np.sqrt(2 / self.nbases)
+        b = np.zeros(self.nout)
         coeff = W
         return params_mach, coeff
     def forward(self, params_mach, coeff, t):
@@ -93,7 +93,7 @@ class ModelEdo:
     def loss(self, params_mach, coeff):
         res_dom = self.residual_edo(params_mach, coeff)
         res_bdry = self.residual_bdry(params_mach, coeff)
-        return jnp.mean(res_dom ** 2) + jnp.mean(res_bdry ** 2)
+        return np.mean(res_dom ** 2) + np.mean(res_bdry ** 2)
 
 def train_bases(params_machine, machine, t_colloc, lr=0.1, n_epochs=100):
     optimizer = optax.lbfgs(learning_rate=lr)
@@ -137,11 +137,11 @@ def solve_ls(coefs, model, params_machine):
         res_dom = model.residual_edo(params_machine, pc).flatten()
         res_bdry = model.residual_bdry(params_machine, pc).flatten()
         # print(f"{res_dom.shape=} {res_bdry.shape=} {res_bdry=}")
-        return np.array(jnp.concatenate([res_dom, res_bdry]))
+        return np.array(np.concatenate([res_dom, res_bdry]))
     # print(f"{coefs.shape=} {coefs=}")
     result = least_squares(f, coefs)
     print(f"{result.message=} {result.status=} {result.nfev=}")
-    return jnp.array(result.x.reshape(shape))
+    return np.array(result.x.reshape(shape))
 
 def train_all(params, model, lr=0.01, n_epochs=1000):
     # optimizer = optax.adam(learning_rate=lr)
@@ -188,12 +188,12 @@ if __name__ == '__main__':
     # print(f"coefs={coefs}")
 
     # Plot results
-    t_plot = jnp.linspace(model.t_colloc[0], model.t_colloc[-1], 200)
+    t_plot = np.linspace(model.t_colloc[0], model.t_colloc[-1], 200)
     u_pred = jax.vmap(lambda t: model.forward(params_machine, coefs, t))(t_plot)
     if hasattr(app, 'solution'):
         u_true = app.solution(t_plot)
         u_cg = None
-        err = jnp.mean((u_true-u_pred)**2)
+        err = np.mean((u_true-u_pred)**2)
     else:
         u_true = None
         import ode_solver
@@ -201,7 +201,7 @@ if __name__ == '__main__':
         u_node, u_coef = cgp.run_forward(model.t_colloc, app)
         u_cg = u_node.T
         u_machine = jax.vmap(lambda t: model.forward(params_machine, coefs, t))(model.t_colloc)
-        err = jnp.mean((u_cg-u_machine)**2)
+        err = np.mean((u_cg-u_machine)**2)
     print(f"err = {err:.5e}")
 
     base_dict = model.machine.bases(params_machine, t_plot)

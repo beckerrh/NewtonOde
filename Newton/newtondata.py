@@ -6,7 +6,7 @@ Created on Mon Dec  5 15:38:16 2016
 @author: becker
 """
 
-from backend import np
+import numpy as np
 
 class StoppingParamaters:
     def __repr__(self):

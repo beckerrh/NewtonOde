@@ -20,7 +20,7 @@ assert __name__ == '__main__'
 app, layers, n_colloc = ode_examples.ExponentialJordan(lam=-0.1, t_end=20), [64, 64], 200
 
 layers = [1,*layers, app.ncomp]
-t_plot = jnp.linspace(app.t_begin, app.t_end, 4*n_colloc)
+t_plot = np.linspace(app.t_begin, app.t_end, 4*n_colloc)
 t0 = time.time()
 
 trained_machine = ode_machine_model.solve_ode(app, layers, n_colloc)

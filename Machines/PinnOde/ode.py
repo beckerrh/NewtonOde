@@ -25,16 +25,16 @@ class MachineMlp(nnx.Module):
             in_dim = out_dim
     def __call__(self, t):
         # t shape: scalar or (batch,)
-        x = jnp.atleast_1d(t).reshape(-1, 1)  # shape (batch, 1)
+        x = np.atleast_1d(t).reshape(-1, 1)  # shape (batch, 1)
         for layer in self.layers[:-1]:
-            x = x + jnp.tanh(layer(x))
+            x = x + np.tanh(layer(x))
         last_layer = self.layers[-1]
         return last_layer(x)
 
     def regularization(self, t_colloc):
         M = self(t_colloc)  # shape (nbases, N)
-        e = jnp.sum(M, axis=1) - 1
-        return jnp.mean(e ** 2)
+        e = np.sum(M, axis=1) - 1
+        return np.mean(e ** 2)
 
 #==================================================================
 class ModelEdo(nnx.Module):
@@ -71,7 +71,7 @@ def train_all(machine, model, t_colloc, lr=0.01, n_epochs=1000):
         model_temp = nnx.merge(graphdef_model, params_model, batch_stats_model)
         res_dom = model_temp.residual_edo(machine_tmp, t_colloc)
         res_bdry = model_temp.residual_bdry(machine_tmp, t_colloc)
-        return jnp.mean(res_dom**2) + jnp.mean(res_bdry**2) + 0.1*machine_tmp.regularization(t_colloc)
+        return np.mean(res_dom**2) + np.mean(res_bdry**2) + 0.1*machine_tmp.regularization(t_colloc)
 
     @jax.jit
     def train_step(params, opt_state):
@@ -106,12 +106,12 @@ if __name__ == '__main__':
     machine = MachineMlp(layers, key)
     key = jax.random.PRNGKey(43)
     model = ModelEdo(app, layers[-1], key)
-    t_colloc = jnp.linspace(app.t_begin, app.t_end, n_colloc)
+    t_colloc = np.linspace(app.t_begin, app.t_end, n_colloc)
 
     machine, model = train_all(machine, model, t_colloc, 0.1, n_epochs=2000)
 
     # Plot results
-    t_plot = jnp.linspace(t_colloc[0], t_colloc[-1], 200)
+    t_plot = np.linspace(t_colloc[0], t_colloc[-1], 200)
     u_pred = jax.vmap(lambda t: model.forward(machine, t))(t_plot)
     k1 = r"$u' = f(u)$ " + app.name
     if hasattr(app, 'solution'):
@@ -129,7 +129,7 @@ if __name__ == '__main__':
         plot_dict = {k1: [t_colloc, {"mach": u_machine, "cg":u_cg}]}
         err = u_cg-u_machine
         plot_dict["error"] = [t_colloc, err]
-    print(f"err = {jnp.mean(err**2):.5e}")
+    print(f"err = {np.mean(err**2):.5e}")
 
     base_dict = machine(t_plot)
     plot_dict["bases"] = [t_plot, base_dict]

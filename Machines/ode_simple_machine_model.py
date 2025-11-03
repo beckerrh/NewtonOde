@@ -17,13 +17,13 @@ class MLP(nnx.Module):
             layer = nnx.Linear(in_dim, out_dim, rngs=nnx.Rngs(key))
             self.layers.append(layer)
     def normalize_t(self, t):
-        t_mean, t_std = jnp.mean(t_colloc), jnp.std(t_colloc)
+        t_mean, t_std = np.mean(t_colloc), np.std(t_colloc)
         return (t - t_mean) / t_std
     def basis(self, t):
-        t = jnp.atleast_1d(t).reshape(-1, 1)
+        t = np.atleast_1d(t).reshape(-1, 1)
         t = self.normalize_t(t)
         for layer in self.layers[:-1]:
-            t = jnp.tanh(layer(t))
+            t = np.tanh(layer(t))
         return t.T.squeeze()
     def forward(self, t):
         t = self.basis(t)
@@ -32,8 +32,8 @@ class MLP(nnx.Module):
     def regularization(self, t_colloc):
         M = self.basis(t_colloc)  # shape (nbases, N)
         # print(f"{M.shape=}")
-        e = jnp.sum(M, axis=1) - 1
-        return jnp.mean(e ** 2)
+        e = np.sum(M, axis=1) - 1
+        return np.mean(e ** 2)
 
 #-----------------------------------------------------------
 class ModelOde:
@@ -49,12 +49,12 @@ class ModelOde:
     def residual_bc(self, machine):
         return machine.forward(self.t0)-1
     def solution(self, t):
-        return jnp.exp(self.lam*t)
+        return np.exp(self.lam*t)
 
 
 # Points de collocation
 t0, t1, n_colloc = 0, 3, 10
-t_colloc = jnp.linspace(t0, t1, n_colloc)
+t_colloc = np.linspace(t0, t1, n_colloc)
 # Machine
 layers = [1, 8, 8, 1]
 key = jax.random.PRNGKey(33)
@@ -66,7 +66,7 @@ def loss(params):
     # ode loss
     machine_tmp = nnx.merge(graphdef, params, batch_stats)
     res = model.residual_ode(machine_tmp)
-    ode_loss = jnp.mean(res ** 2)
+    ode_loss = np.mean(res ** 2)
     bc_loss = model.residual_bc(machine_tmp)
     return 10*ode_loss + bc_loss**2 + 0.01*machine_tmp.regularization(model.t_colloc)
 
@@ -92,7 +92,7 @@ for epoch in range(n_epochs):
 
 trained_machine = nnx.merge(graphdef, params, batch_stats)
 # Visu
-t_plot = jnp.linspace(t0, t1, 200)
+t_plot = np.linspace(t0, t1, 200)
 u_pred = jax.vmap(trained_machine.forward)(t_plot)
 u_true = model.solution(t_plot)
 

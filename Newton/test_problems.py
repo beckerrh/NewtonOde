@@ -1,14 +1,8 @@
 import jax
 
-from backend import np
+import numpy as np
 import os
 from types import SimpleNamespace
-
-if os.getenv("BACKEND", "numpy").lower() == "jax":
-    math = np
-else:
-    import sympy as sp
-    math = sp
 
 #----------------------------------------------------------------------
 class NewtonDriverNumpy:
@@ -17,6 +11,9 @@ class NewtonDriverNumpy:
             test_problem = kwargs['test_problem']
             self.F = test_problem.F
             self.dF = test_problem.dF
+        else:
+            self.F = kwargs.pop('F')
+            self.dF = kwargs.pop('dF')
     def computeResidual(self, x):
         xnorm = np.linalg.norm(x)
         r = self.F(x)
@@ -27,7 +24,11 @@ class NewtonDriverNumpy:
         r = kwargs['r']
         x = kwargs['x']
         J = np.atleast_2d(self.dF(x))
-        dx = np.linalg.solve(J, -r)
+        try:
+            dx = np.linalg.solve(J, -r)
+        except np.linalg.LinAlgError:
+            print(f"{J=}")
+            assert None
         return SimpleNamespace(update=dx, update_norm=np.linalg.norm(dx), meritgrad=-np.sum(r**2))
     def computeUpdateSimple(self, **kwargs):
         r = kwargs['r']
@@ -49,21 +50,24 @@ class TestProblem:
             self.ncomp = self.x0.size
         if not hasattr(self, 'xS') and xS is not None: self.xS = np.asarray(xS)
         if not hasattr(self, 'F'): self.F = F
-        if os.getenv("BACKEND", "numpy").lower() == "jax":
-            self.dF = jax.jacrev(self.F)
-        else:
-            if self.ncomp == 1:
-                x = sp.symbols('x0')
-                F_sym = [self.F(x)]   # wrap scalar in a list
-                f = sp.Matrix(F_sym)
-                J = f.jacobian([x])
-                self.dF = sp.lambdify([x], J, 'numpy')
-            else:
-                x = sp.symbols(f'x0:{self.ncomp}')
-                F_sym = self.F(x)
-                f = sp.Matrix(F_sym)
-                J = f.jacobian(x)
-                self.dF = sp.lambdify([x], J, 'numpy')
+        import jax
+        jax.config.update("jax_enable_x64", True)
+        self.dF = jax.jacrev(self.F)
+        # if os.getenv("BACKEND", "numpy").lower() == "jax":
+        #     self.dF = jax.jacrev(self.F)
+        # else:
+        #     if self.ncomp == 1:
+        #         x = sp.symbols('x0')
+        #         F_sym = [self.F(x)]   # wrap scalar in a list
+        #         f = sp.Matrix(F_sym)
+        #         J = f.jacobian([x])
+        #         self.dF = sp.lambdify([x], J, 'numpy')
+        #     else:
+        #         x = sp.symbols(f'x0:{self.ncomp}')
+        #         F_sym = self.F(x)
+        #         f = sp.Matrix(F_sym)
+        #         J = f.jacobian(x)
+        #         self.dF = sp.lambdify([x], J, 'numpy')
 
 class Simple_Quadratic(TestProblem):
     def __init__(self): super().__init__(x0=3.0, F=lambda x:(x-1.0)**2, xS=1.0)

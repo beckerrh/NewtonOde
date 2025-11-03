@@ -27,7 +27,7 @@ def damped_newton(f, x0, max_iter=10, tol=1e-8, alpha=0.3, beta=0.5):
         Approximate root
     """
     x = x0
-    df = grad(lambda x: jnp.squeeze(f(x)))  # derivative of f
+    df = grad(lambda x: np.squeeze(f(x)))  # derivative of f
     for i in range(max_iter):
         fx = f(x)
         dfx = df(x)
@@ -44,7 +44,7 @@ def damped_newton(f, x0, max_iter=10, tol=1e-8, alpha=0.3, beta=0.5):
         print(f"Iteration {i}:  {x.item()=} {f(x).item()=} {s.item()=} {dfx.item()=} {lam=}")
     raise RuntimeError("Newton did not converge")
 
-f = lambda x: 10.0 * jnp.sin(2.0 * x) + 4.0 - x**2
+f = lambda x: 10.0 * np.sin(2.0 * x) + 4.0 - x**2
 
 x_root = damped_newton(f, x0=3.0)
 print("Root:", x_root)

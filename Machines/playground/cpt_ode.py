@@ -27,7 +27,7 @@ class MLP(nnx.Module):
 # Example: linear system u' = A u  (stable)
 # -----------------------
 out_dim = 3
-A = jnp.array([[-1.0, -0.2, 0.0],
+A = np.array([[-1.0, -0.2, 0.0],
                [0.1, -0.5, 0.0],
                [0.0, 0.2, -0.3]])  # example matrix
 
@@ -35,7 +35,7 @@ def f_true(t, u):
     # u shape (..., out_dim)
     return (u @ A.T)  # shape (..., out_dim)
 
-u0 = jnp.array([1.0, 0.5, -0.2])  # desired initial condition vector
+u0 = np.array([1.0, 0.5, -0.2])  # desired initial condition vector
 
 # -----------------------
 # Init model and optimizers
@@ -65,14 +65,14 @@ mu_check_every = 200  # steps between mu-schedule checks
 mu_plateau_tol = 1e-4  # threshold for "not improved" on |h|
 
 # lambda multiplier (vector)
-lam = jnp.zeros_like(u0)
+lam = np.zeros_like(u0)
 
 # -----------------------
 # Utilities: du/dt via jacobian, batched
 # -----------------------
 def time_to_model_input(ts):
     # ensure ts is shape (N,1)
-    ts = jnp.asarray(ts)
+    ts = np.asarray(ts)
     if ts.ndim == 1:
         ts = ts.reshape(-1, 1)
     return ts
@@ -96,10 +96,10 @@ def residual_loss(model, ts):
     us = model(ts)[:, :]  # (N, out_dim)
     dudt = dudt_batch(model, ts)  # (N, out_dim)
     resid = dudt - f_true(ts.squeeze(-1)[:, None], us)  # broadcasting t if needed
-    return jnp.mean(jnp.sum(resid**2, axis=-1))  # MSE over components
+    return np.mean(np.sum(resid**2, axis=-1))  # MSE over components
 
 def constraint_value(model):
-    t0 = jnp.array([[0.0]])
+    t0 = np.array([[0.0]])
     return model(t0).squeeze(0)  # shape (out_dim,)
 
 # -----------------------
@@ -110,7 +110,7 @@ def augmented_loss_for_params(params_like, model_obj, lam, mu, ts):
     m_tmp = model_obj.update_parameters(params_like)
     res = residual_loss(m_tmp, ts)
     h = constraint_value(m_tmp) - u0  # shape (out_dim,)
-    aug = jnp.dot(lam, h) + 0.5 * mu * jnp.dot(h, h)
+    aug = np.dot(lam, h) + 0.5 * mu * np.dot(h, h)
     return res + aug, (res, h)
 
 # -----------------------
@@ -156,7 +156,7 @@ def train_step(model, model_opt_state, lam, mu, ts, use_lambda_optimizer=False, 
 # -----------------------
 def validate(model, ts_val):
     res = float(residual_loss(model, ts_val))
-    h = jnp.array(constraint_value(model) - u0)
+    h = np.array(constraint_value(model) - u0)
     return res, np.array(h)
 
 # -----------------------
@@ -186,7 +186,7 @@ for step in range(1, n_steps+1):
 
     # mu scheduling: check every mu_check_every steps if |h| improved
     if step % mu_check_every == 0:
-        curr_h_norm = float(jnp.linalg.norm(constraint_value(model) - u0))
+        curr_h_norm = float(np.linalg.norm(constraint_value(model) - u0))
         if curr_h_norm + mu_plateau_tol >= best_h_norm:
             # not improving -> increase mu
             mu = mu * mu_increase_factor

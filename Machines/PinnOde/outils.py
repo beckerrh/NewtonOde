@@ -24,24 +24,24 @@ class TriangularDense(nnx.Module):
         self.lower = lower
         self.use_bias = use_bias
         w_key = rngs()
-        w_init = jax.random.normal(w_key, (n, n)) * jnp.sqrt(2.0 / max(1, n))
+        w_init = jax.random.normal(w_key, (n, n)) * np.sqrt(2.0 / max(1, n))
         self.weight = nnx.Param(w_init)
 
         if use_bias:
-            self.bias = nnx.Param(jnp.zeros((n,)))
+            self.bias = nnx.Param(np.zeros((n,)))
         else:
             self.bias = None
         # if lower:
-        #     mask = jnp.tril(jnp.ones((out_dim, in_dim)))
+        #     mask = np.tril(np.ones((out_dim, in_dim)))
         # else:
-        #     mask = jnp.triu(jnp.ones((out_dim, in_dim)))
+        #     mask = np.triu(np.ones((out_dim, in_dim)))
         # self.mask = nnx.Param(mask, collection='buffers')
 
     def __call__(self, x):
         if self.lower:
-            mask = jnp.tril(jnp.ones((self.n, self.n)))
+            mask = np.tril(np.ones((self.n, self.n)))
         else:
-            mask = jnp.triu(jnp.ones((self.n, self.n)))
+            mask = np.triu(np.ones((self.n, self.n)))
         W = self.weight * mask
         y = x @ W.T
         if self.use_bias:
@@ -72,13 +72,13 @@ class BandedDense(nnx.Module):
         except TypeError:
             w_key = rngs
 
-        scale = jnp.sqrt(2.0 / max(1, n))
+        scale = np.sqrt(2.0 / max(1, n))
         # Shape: (n, 2k+1)
         band_init = jax.random.normal(w_key, (n, 2*k + 1)) * scale
         self.band_weights = nnx.Param(band_init)
 
         if use_bias:
-            self.bias = nnx.Param(jnp.zeros((n,)))
+            self.bias = nnx.Param(np.zeros((n,)))
         else:
             self.bias = None
 
@@ -91,7 +91,7 @@ class BandedDense(nnx.Module):
         bw = self.band_weights
 
         # Output y with same batch dims as x
-        y = jnp.zeros_like(x)
+        y = np.zeros_like(x)
 
         # Efficiently add each diagonal
         for offset in range(-k, k+1):

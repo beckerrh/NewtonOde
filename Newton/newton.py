@@ -5,12 +5,13 @@ Created on Mon Dec  5 15:38:16 2016
 
 @author: becker
 """
-import os
-os.environ["BACKEND"] = 'jax'
-
-import newtondata
+try:
+    from . import newtondata
+except ImportError:
+    import newtondata
 from Utility import printer
 from types import SimpleNamespace
+import numpy as np
 
 #----------------------------------------------------------------------
 class Newton:
@@ -20,9 +21,10 @@ class Newton:
         self.nd = kwargs.pop('nd', None)
         self.sdata = kwargs.pop('sdata', newtondata.StoppingParamaters())
         self.iterdata = kwargs.pop('iterdata', newtondata.IterationData())
-        self.name = 'newton'
+        self.name = 'newton   '
+        self.name_gs = 'grad step'
         if hasattr(self.sdata,'addname'): self.name += '_' + self.sdata.addname
-        types = {self.name:'s', "it":'i', '|r|':'e', "|dx|":'e', "|x|":'e','rhodx':'f', 'rhor':'f', 'lin':'i', 'bt':'i', 'r':'f'}
+        types = {'name':'s', "it":'i', '|r|':'e', "|dx|":'e', "|x|":'e','rhodx':'f', 'rhor':'f', 'lin':'i', 'bt':'i', 'r':'f'}
         self.printer = printer.Printer(verbose=self.verbose, types=types)
 
     #----------------------------------------------------------------------
@@ -84,13 +86,14 @@ class Newton:
                     self.printer.print_names()
                 self.printer.values['it'] = self.iterdata.iter
                 self.printer.values['|r|'] = resnorm
+                self.printer.values['name'] = ''
                 self.printer.print()
                 if resnorm < tol:
                     self.iterdata.success = True
                     return x, self.iterdata
             else:
                 self.iterdata.tol_missing = tol / resnorm
-            result = nd.computeUpdate(r=res, x=x, info=self.iterdata)
+            result = self.nd.computeUpdate(r=res, x=x, info=self.iterdata)
             success = getattr(result, 'success', True)
             if not success:
                 self.iterdata.success = False
@@ -113,7 +116,7 @@ class Newton:
                 else:
                     gradient_iteration = True
             if gradient_iteration:
-                print(f"=======Gradient step======")
+                # print(f"=======Gradient step======")
                 result = self.computeResidual(x)
                 res, resnorm, meritvalue, xnorm = result.r, result.rnorm, result.merit, result.xnorm
                 result = self.nd.computeUpdateSimple(r=res, x=x, info=self.iterdata)
@@ -146,7 +149,13 @@ class Newton:
             self.printer.values['rhor'] = self.iterdata.rhor
             self.printer.values['lin'] = liniter
             self.printer.values['bt'] = btit
+            if gradient_iteration:
+                self.printer.values['name'] = self.name_gs
+            else:
+                self.printer.values['name'] = self.name
             self.printer.print()
+            if hasattr(self.nd, 'call_back'):
+                self.nd.call_back(x)
             if resnorm<tol:
                 return x, self.iterdata
             if xnorm >= divx:
@@ -162,7 +171,7 @@ class Newton:
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
-    from backend import np
+    import numpy as np
     import test_problems, inspect
     problems = []
     for name, cls in inspect.getmembers(test_problems, inspect.isclass):

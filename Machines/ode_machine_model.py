@@ -8,7 +8,7 @@ class MLP(nnx.Module):
     t_mean: float = nnx.field(init=False, static=True)
     t_std: float = nnx.field(init=False, static=True)
     def __init__(self, layers, key, t_colloc):
-        self.t_mean, self.t_std = float(jnp.mean(t_colloc)), float(jnp.std(t_colloc))
+        self.t_mean, self.t_std = float(np.mean(t_colloc)), float(np.std(t_colloc))
         key, subkey = jax.random.split(key)
         self.feature_layers = []
         for l in range(1, len(layers) - 1):  # all but last
@@ -23,10 +23,10 @@ class MLP(nnx.Module):
         return (t - self.t_mean) / self.t_std
     def basis(self, t):
         """Compute nonlinear basis functions φ(t)."""
-        t = jnp.atleast_1d(t).reshape(-1, 1)
+        t = np.atleast_1d(t).reshape(-1, 1)
         t = self.normalize_t(t)
         for layer in self.feature_layers:
-            t = jnp.tanh(layer(t))
+            t = np.tanh(layer(t))
         return t.T.squeeze()
     def basis_t(self, t):
         dphi_dt_single = lambda ti: jax.jacrev(self.basis)(ti).squeeze()
@@ -38,14 +38,14 @@ class MLP(nnx.Module):
     def regularization_basis(self, t_colloc, level=0):
         M = self.basis(t_colloc)
         print(f"{M.shape=}")
-        r1 = jnp.sum(M, axis=0)
-        if level==0: return  jnp.mean(r1 ** 2)
-        r2 = M@M.T - jnp.eye(M.shape[0])
-        # r2 = M.T@M - jnp.eye(M.shape[1])
-        if level==1: return  jnp.mean(r1 ** 2) + 0.01*jnp.mean(r2 ** 2)
+        r1 = np.sum(M, axis=0)
+        if level==0: return  np.mean(r1 ** 2)
+        r2 = M@M.T - np.eye(M.shape[0])
+        # r2 = M.T@M - np.eye(M.shape[1])
+        if level==1: return  np.mean(r1 ** 2) + 0.01*np.mean(r2 ** 2)
         N = self.basis_t(t_colloc)
-        r3 = N@N.T - jnp.eye(N.shape[0])
-        return  jnp.mean(r1 ** 2) + 0.01*jnp.mean(r2 ** 2) + 0.0001*jnp.mean(r3**2)
+        r3 = N@N.T - np.eye(N.shape[0])
+        return  np.mean(r1 ** 2) + 0.01*np.mean(r2 ** 2) + 0.0001*np.mean(r3**2)
     def forward_batch(self, t_colloc):
         return jax.vmap(self.forward)(t_colloc)
 
@@ -56,7 +56,7 @@ class ModelOde:
     def __init__(self, app, n_colloc):
         self.app = app
         self.t0, self.t1 = app.t_begin, app.t_end
-        self.t_colloc = jnp.linspace(self.t0, self.t1, n_colloc)
+        self.t_colloc = np.linspace(self.t0, self.t1, n_colloc)
     def residual_ode_single(self, machine, t):
         u = machine.forward(t)
         dudt = jax.jacrev(machine.forward)(t)
@@ -73,8 +73,8 @@ def solve_ode(app, layers, n_colloc, return_basis=False):
     machine = MLP(layers, key, model.t_colloc)
     if return_basis: base0 = machine.basis(model.t_colloc).T
     def ode_loss(machine_tmp):
-        ode_res = jnp.mean(model.residual_ode(machine_tmp)**2)
-        bc_loss = jnp.mean(model.residual_bc(machine_tmp)**2)
+        ode_res = np.mean(model.residual_ode(machine_tmp)**2)
+        bc_loss = np.mean(model.residual_bc(machine_tmp)**2)
         return ode_res + bc_loss+ 0.5 * machine_tmp.regularization_basis(model.t_colloc,level=0)
     trained_machine = training.train_machine_and_solve(machine, ode_loss)
     if return_basis:
@@ -100,8 +100,8 @@ if __name__ == '__main__':
     model = ModelOde(app, n_colloc)
     machine = MLP(layers, key, model.t_colloc)
     def ode_loss(machine_tmp):
-        ode_res = jnp.mean(model.residual_ode(machine_tmp) ** 2)
-        bc_loss = jnp.mean(model.residual_bc(machine_tmp) ** 2)
+        ode_res = np.mean(model.residual_ode(machine_tmp) ** 2)
+        bc_loss = np.mean(model.residual_bc(machine_tmp) ** 2)
         return ode_res + bc_loss
     def machine_loss(machine_tmp):
         return machine_tmp.regularization_basis(model.t_colloc, level=1)
@@ -119,7 +119,7 @@ if __name__ == '__main__':
         trained_machine = training.solve_coefficients(machine, ode_loss)
         base1 = trained_machine.basis(model.t_colloc).T
 
-    t_plot = jnp.linspace(app.t_begin, app.t_end, 4 * n_colloc)
+    t_plot = np.linspace(app.t_begin, app.t_end, 4 * n_colloc)
     u_mlp = trained_machine.forward_batch(t_plot)
 
     plot_dict = {"u* vs. uh" : {'x':t_plot, 'y':{}}}
@@ -130,7 +130,7 @@ if __name__ == '__main__':
         plot_dict["u* vs. uh"]['y']['u*'] = u_true
         plot_dict['e'] = {'x': t_plot, 'y': {}}
         plot_dict['e']['y']['e'] =  u_mlp - u_true
-        plot_dict['e']['y']['abs(e)'] =  jnp.abs(u_mlp - u_true)
+        plot_dict['e']['y']['abs(e)'] =  np.abs(u_mlp - u_true)
 
     plot_dict["bases_0"] = {'x': model.t_colloc, 'y': {'b': base0}, 'no_legend': True}
     plot_dict["bases"] = {'x': model.t_colloc, 'y': {}, 'no_legend': True}

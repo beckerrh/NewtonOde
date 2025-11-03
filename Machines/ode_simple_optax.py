@@ -18,7 +18,7 @@ def plot_solutions(t_plot, t_colloc, u1, u2, t1='Approximation', t2='Solution', 
 
 # Points de collocation
 t0, t1, n_colloc = 0, 3, 10
-t_colloc = jnp.linspace(t0, t1, n_colloc)
+t_colloc = np.linspace(t0, t1, n_colloc)
 # Machine
 layers = [1, 8, 8, 1]
 # Initialisation des paramètres
@@ -29,14 +29,14 @@ def init_params():
     for l in range(1,len(layers)):
         in_dim, out_dim =  layers[l-1], layers[l]
         key, subkey = jax.random.split(key)
-        W = jax.random.normal(subkey, (out_dim, in_dim)) * jnp.sqrt(2 / in_dim)
-        b = jnp.zeros(out_dim)
+        W = jax.random.normal(subkey, (out_dim, in_dim)) * np.sqrt(2 / in_dim)
+        b = np.zeros(out_dim)
         params.append((W,b))
     return params
 def forward(params, t):
-    t = jnp.array([t])
+    t = np.array([t])
     for W, b in params[:-1]:
-        t = jnp.tanh(W @ t + b)
+        t = np.tanh(W @ t + b)
     W, b = params[-1]
     return (W @ t +b)[0]
 # Calcul de u''(x) par JAX autodiff
@@ -47,19 +47,19 @@ def d2udt2(params, t):
 def residual(params, t):
     lam = 0.9
     return dudt(params, t) - lam*forward (params, t)
-    return d2udt2(params, t) + (jnp.pi ** 2) * jnp.sin(jnp.pi * t)
+    return d2udt2(params, t) + (np.pi ** 2) * np.sin(np.pi * t)
 # Total loss = ode_colloc + boundary conditions
 def loss(params):
     # Ode loss
     res = jax.vmap(lambda t: residual(params, t))(t_colloc)
-    ode_loss = jnp.mean(res ** 2)
+    ode_loss = np.mean(res ** 2)
     # Boundary conditions
     bc_loss = (forward(params, t_colloc[0])-1) ** 2
     # bc_loss = forward(params, t_colloc[0]) ** 2 + forward(params, t_colloc[-1]) ** 2
     return ode_loss + bc_loss
 def solution(t):
     lam = 0.9
-    return jnp.exp(lam*t)
+    return np.exp(lam*t)
 
 params = init_params()
 optimizer = optax.lbfgs(learning_rate=0.001)
@@ -80,7 +80,7 @@ for epoch in range(n_epochs):
         print(f"Epoch {epoch:7d}, Loss: {loss_value:.3e}")
 
 # Visu
-t_plot = jnp.linspace(t0, t1, 200)
+t_plot = np.linspace(t0, t1, 200)
 u_pred = jax.vmap(lambda t: forward(params,t))(t_plot)
 u_true = solution(t_plot)
 

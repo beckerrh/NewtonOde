@@ -5,8 +5,9 @@ import numpy as np
 # Commençons par la fonction de visu
 def plot_solutions_single(ax, kwargs):
     # print(f"{kwargs=}")
-    x = kwargs.pop('x')
-    y = kwargs.pop('y')
+    x, y = kwargs.pop('x'), kwargs.pop('y')
+    xlabel, ylabel = kwargs.pop('xlabel',None), kwargs.pop('ylabel',None)
+    step = kwargs.pop('type', 'p1')=='step'
     assert isinstance(y, dict)
     scale = kwargs.pop('scale', 'normal')
     kwargs_plot = kwargs.pop('kwargs', {})
@@ -14,22 +15,27 @@ def plot_solutions_single(ax, kwargs):
     for k, v in y.items():
         kwp = kwargs_plot[k] if k in kwargs_plot else {}
         count += 1 if v.ndim == 1 else v.shape[1]
-        if scale == "loglog":
-            ax.loglog(x, v, label=k, **kwp)
+        if step:
+            ax.step(x[:-1], v, where='post', label=k, **kwp)
         else:
-            ax.plot(x, v, label=k, **kwp)
+            if scale == "loglog":
+                ax.loglog(x, v, label=k, **kwp)
+            else:
+                ax.plot(x, v, label=k, **kwp)
     if not 'no_legend' in kwargs: ax.legend()
-    ax.set_xlabel("t")
+    if xlabel: ax.set_xlabel(xlabel)
+    if ylabel: ax.set_xlabel(ylabel)
     ax.grid(True)
-def plot_solutions(plot_dicts):
+def plot_solutions(plot_dicts, title=None):
     n_plots = len(plot_dicts)
     fig, axes = plt.subplots(nrows=n_plots, ncols=1, figsize=(8, 8))
-    fig.tight_layout()
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    if title: fig.suptitle(title)
     if not isinstance(axes, np.ndarray): axes = [axes]
     for ax, (k,v) in zip(axes, plot_dicts.items()):
         ax.set_title(k)
         plot_solutions_single(ax, v)
-    plt.show()
+    # plt.show()
 def plot_error_curves(plot_dicts):
     for k,v in list(plot_dicts.items()):
         ns = v['x']
@@ -42,9 +48,5 @@ def plot_error_curves(plot_dicts):
             plot_dicts[k]['y'][kslope] = np.exp(b)*ns**a
             plot_dicts[k]['kwargs'][k2] = {'ls': '--', 'marker': 'o'}
             plot_dicts[k]['kwargs'][kslope] = {'ls': ':', 'color': 'k'}
-    # for k,v in plot_dicts.items():
-    #     print(f"{k=}")
-    #     for k2, v in v['u_plot'].items():
-    #         print(f"\t {k2} {v}")
     plot_solutions(plot_dicts)
 

@@ -4,7 +4,7 @@ class Printer:
         lengths = {}
         for k,v in types.items():
             if v == 's':
-                lengths[k] = len(k)+2
+                lengths[k] = max(10, len(k)+2)
             elif v == 'i':
                 lengths[k] = max(4, len(k))+2
             elif v == 'f':
@@ -37,6 +37,7 @@ class Printer:
         print(f)
     def print(self):
         values = self.values
+        # print(f"{values=}")
         if not self.verbose: return
         fmt = ""
         first = True

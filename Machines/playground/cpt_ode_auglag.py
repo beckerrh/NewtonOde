@@ -21,13 +21,13 @@ print_every = 200
 
 # -------------------- Utilities --------------------
 def time_to_input(ts):
-    ts = jnp.asarray(ts)
+    ts = np.asarray(ts)
     if ts.ndim == 1:
         ts = ts.reshape(-1,1)
     return ts
 
 def exact_solution(ts):
-    return u0 * jnp.exp(-ts)
+    return u0 * np.exp(-ts)
 
 # -------------------- Triangular Dense module --------------------
 class TriangularDense(nnx.Module):
@@ -37,16 +37,16 @@ class TriangularDense(nnx.Module):
         self.lower = lower
         self.use_bias = use_bias
         k1, = jax.random.split(key, 1)
-        w_init = jax.random.normal(k1, (out_dim, in_dim)) * jnp.sqrt(2.0 / max(1, in_dim))
+        w_init = jax.random.normal(k1, (out_dim, in_dim)) * np.sqrt(2.0 / max(1, in_dim))
         self.weight = nnx.Param(w_init)
         if use_bias:
-            self.bias = nnx.Param(jnp.zeros((out_dim,)))
+            self.bias = nnx.Param(np.zeros((out_dim,)))
         else:
             self.bias = None
         if lower:
-            mask = jnp.tril(jnp.ones((out_dim, in_dim)))
+            mask = np.tril(np.ones((out_dim, in_dim)))
         else:
-            mask = jnp.triu(jnp.ones((out_dim, in_dim)))
+            mask = np.triu(np.ones((out_dim, in_dim)))
         self.mask = mask
 
     def __call__(self, x):
@@ -60,10 +60,10 @@ class TriangularDense(nnx.Module):
 class SimpleDense(nnx.Module):
     def __init__(self, in_dim, out_dim, key, use_bias=True):
         k1, = jax.random.split(key, 1)
-        w_init = jax.random.normal(k1, (out_dim, in_dim)) * jnp.sqrt(2.0 / max(1, in_dim))
+        w_init = jax.random.normal(k1, (out_dim, in_dim)) * np.sqrt(2.0 / max(1, in_dim))
         self.weight = nnx.Param(w_init)
         if use_bias:
-            self.bias = nnx.Param(jnp.zeros((out_dim,)))
+            self.bias = nnx.Param(np.zeros((out_dim,)))
         else:
             self.bias = None
 
@@ -121,10 +121,10 @@ def residual_loss(model, ts):
     us = model(ts).squeeze(-1)
     dudt = dudt_scalar_batch(model, ts)
     resid = dudt + us
-    return jnp.mean(resid**2)
+    return np.mean(resid**2)
 
 def constraint_value(model):
-    t0 = jnp.array([[0.0]])
+    t0 = np.array([[0.0]])
     return model(t0).squeeze()
 
 def augmented_loss_params(params_like, model_obj, lam, mu, ts):
