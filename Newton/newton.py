@@ -15,6 +15,9 @@ import numpy as np
 
 #----------------------------------------------------------------------
 class Newton:
+    """
+    self.nd: Newton Driver supposed to provide
+    """
     def __init__(self, **kwargs):
         self.verbose = kwargs.pop('verbose', True)
         self.verbose_bt = kwargs.pop('verbose_bt', False)
@@ -38,8 +41,11 @@ class Newton:
             else:
                 step *= omega
             x = x0 + step * dx
-            residual_result = self.computeResidual(x)
-            meritnew = residual_result.merit
+            residual_result = self.nd.computeResidual(x)
+            #     return SimpleNamespace(success=True, r=result.residual, rnorm=result.residual_norm,
+            #                            xnorm=result.x_norm, merit=result.meritvalue)
+            # residual_result = self.computeResidual(x)
+            meritnew = residual_result.meritvalue
             if self.verbose_bt:
                 print(f"bt {it:3} {meritnew:10.3e} {meritfirst:10.3e} {step:9.2e}")
             if meritnew <= meritfirst + c*step*meritgrad:
@@ -54,11 +60,11 @@ class Newton:
         result.iter = maxiter
         return result
 
-    #--------------------------------------------------------------------
-    def computeResidual(self, x):
-        result = self.nd.computeResidual(x)
-        return SimpleNamespace(success=True, r=result.residual, rnorm=result.residual_norm,
-                               xnorm=result.x_norm, merit=result.meritvalue)
+    # #--------------------------------------------------------------------
+    # def computeResidual(self, x):
+    #     result = self.nd.computeResidual(x)
+    #     return SimpleNamespace(success=True, r=result.residual, rnorm=result.residual_norm,
+    #                            xnorm=result.x_norm, merit=result.meritvalue)
     # --------------------------------------------------------------------
     def solve(self, x0, **kwargs):
         """
@@ -70,15 +76,15 @@ class Newton:
         divx = self.sdata.divx
         maxiter: int = kwargs.pop('maxiter', self.sdata.maxiter)
         x = np.atleast_1d(x0)
-        if not x.ndim == 1:
-            raise ValueError(f"{x.shape=}")
+        # if not x.ndim == 1:
+        #     raise ValueError(f"{x.shape=}")
         self.iterdata.bad_convergence = False
         self.iterdata.success = True
         for iteration in range(maxiter):
             if iteration==0:
                 # for iteration>0 this is done in back-tracking
-                result = self.computeResidual(x)
-                res, resnorm, meritvalue, xnorm = result.r, result.rnorm, result.merit, result.xnorm
+                result = self.nd.computeResidual(x)
+                res, resnorm, meritvalue, xnorm = result.residual, result.residual_norm, result.meritvalue, result.x_norm
                 self.iterdata.reset(resnorm)
                 tol = max(atol, rtol * resnorm)
                 toldx = max(atoldx, rtoldx * xnorm)
@@ -112,13 +118,16 @@ class Newton:
                 btit += btresult.iter
                 if btresult.success:
                     rr = btresult.residual_result
-                    res, resnorm, xnorm, meritvalue = rr.r, rr.rnorm, rr.xnorm, rr.merit
+                    res, resnorm, xnorm, meritvalue = rr.residual, rr.residual_norm, rr.x_norm, rr.meritvalue
                 else:
                     gradient_iteration = True
             if gradient_iteration:
                 # print(f"=======Gradient step======")
-                result = self.computeResidual(x)
-                res, resnorm, meritvalue, xnorm = result.r, result.rnorm, result.merit, result.xnorm
+                result = self.nd.computeResidual(x)
+                #     return SimpleNamespace(success=True, r=result.residual, rnorm=result.residual_norm,
+                #                            xnorm=result.x_norm, merit=result.meritvalue)
+                # result = self.computeResidual(x)
+                res, resnorm, meritvalue, xnorm = result.residual, result.residual_norm, result.meritvalue, result.x_norm
                 result = self.nd.computeUpdateSimple(r=res, x=x, info=self.iterdata)
                 dx = result.update
                 dxnorm = result.update_norm
@@ -129,8 +138,8 @@ class Newton:
                 btresult = self.backtracking(x, dx, meritvalue, meritgrad, step)
                 x = btresult.x
                 self.step_grad = 2.0*btresult.step
-                res = btresult.residual_result.r
-                resnorm = btresult.residual_result.rnorm
+                res = btresult.residual_result.residual
+                resnorm = btresult.residual_result.residual_norm
 
                 btit += btresult.iter
                 self.sdata.bt_maxiter = bt_maxiter

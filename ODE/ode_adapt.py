@@ -8,16 +8,31 @@ import ode_examples
 import matplotlib.pyplot as plt
 
 #==================================================================
-class ODE_nonlinear():
+class OdeLinearized(ode_examples.OdeExample):
+    def __init__(self, app):
+        assert not hasattr(app, 'a_coef')
+        assert not hasattr(app, 'b_coef')
+        assert hasattr(app, 'f')
+        assert hasattr(app, 'df')
+        self.app = app
+        super().__init__(u0=app.u0, t_begin=app.t_begin, t_end=app.t_end)
+
+
+
+#==================================================================
+class Newton_Ode():
     def __init__(self, app, k=0, mesh=None):
         self.solver = ODE_Legendre(k)
-        self.app = app
-        assert not hasattr(self.app, 'a_coef')
-        assert not hasattr(self.app, 'b_coef')
+        self.app = OdeLinearized(app)
         if not mesh:
             self.mesh = mesh1d.mesh(app.t_begin, app.t_end, n=4)
         else:
             self.mesh = mesh
+    def initial_guess(self):
+        nt = self.mesh.shape[0]
+        nbasis = len(self.solver.phi)
+        ncomp = 1 if np.ndim(self.app.u0) == 0 else len(self.app.u0)
+        return np.zeros(shape=(nt, nbasis, ncomp))
 
 
 #==================================================================
@@ -43,7 +58,7 @@ def test_adaptive_linear(app, solver, niter=6, plot=True):
     mesh = mesh1d.mesh(app.t_begin, app.t_end, n=4)
     ns, errs_l2, errs_disc, etas = [], [], [], []
     for iter in range(niter):
-        ucoeff = solver.run(mesh, app)
+        ucoeff = solver.run_linear(mesh, app)
         el2, edisc, err_cell = solver.compute_error(mesh, ucoeff, app.solution)
         eta, eta_cell = solver.estimator(mesh, ucoeff, app)
         errs_l2.append(el2)
@@ -96,6 +111,7 @@ if __name__ == "__main__":
     else:
         from Newton import newton
         app = ode_examples.Logistic()
-        solver = ODE_nonlinear(app, k=2)
+        solver = Newton_Ode(app, k=2)
+        x0 = solver.initial_guess()
         newton = newton.Newton(nd = solver)
-        newton.solve()
+        newton.solve(x0)

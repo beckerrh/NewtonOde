@@ -1,5 +1,5 @@
 class Printer:
-    def __init__(self, verbose, types):
+    def __init__(self, types, verbose=True):
         self.verbose = verbose
         lengths = {}
         for k,v in types.items():
@@ -12,13 +12,13 @@ class Printer:
             elif v == 'e':
                 lengths[k] = max(9, len(k))+2
             else:
-                assert False
+                raise ValueError(f"Unknown type: {v} (known types: s,i,f,e)")
         self.lengths = lengths
         self.formats = {}
         for k, v in lengths.items():
             if types[k] == 's':
                 self.formats[k] = f"{v}"
-            elif types[k] == 'i':
+            elif types[k] == 'i' or types[k] == 'd':
                 self.formats[k] = f"^{v}d"
             elif types[k] == 'f':
                 self.formats[k] = f"^{v}.2f"
@@ -29,23 +29,15 @@ class Printer:
     def print_names(self):
         if not self.verbose: return
         f = ""
-        first = True
         for k, v in self.lengths.items():
-            if first: f += f"{k:<{v}}"
-            else: f += f"{k:^{v}}"
-            first=False
-        print(f)
+            f += f"{k:^{v}}"
+        n = len(f)
+        print(n*'-'+'\n'+f+'\n'+n*'-')
     def print(self):
         values = self.values
-        # print(f"{values=}")
         if not self.verbose: return
         fmt = ""
-        first = True
         for k, v in self.formats.items():
-            if first:
-                fmt += f"{{{k}:<{v}}}"
-            else:
-                fmt+= f"{{{k}:{v}}}"
-            first = False
+            fmt += f"{{{k}:{v}}}"
         print(fmt.format(**values))
 

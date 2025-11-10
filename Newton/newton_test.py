@@ -3,7 +3,6 @@
 from scipy.optimize import newton
 
 assert __name__ == '__main__'
-import os
 import newton, test_problems
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,7 +10,7 @@ import jax
 import jax.numpy as jnp
 
 # df = lambda x: 20.0 * np.cos(2.0 * x) - 2.0 * x
-f = lambda x: 10.0 * np.sin(2.0 * x) + 4.0 - x * x
+f = lambda x: 10.0 * jnp.sin(2.0 * x) + 4.0 - x * x
 df = jax.grad(lambda x: np.squeeze(f(x)))
 x0 = np.array([3.])
 
