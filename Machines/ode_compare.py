@@ -33,7 +33,7 @@ u_cg = u_node.T.squeeze()
 t2 = time.time()
 
 def f(y,t): return app.f(y)
-u_odeint = scipy.integrate.odeint(f, app.u0, t_plot)
+u_odeint = scipy.integrate.odeint(f, app.x0, t_plot)
 u_odeint = u_odeint.squeeze(-1) if u_odeint.shape[-1] == 1 else u_odeint
 t3 = time.time()
 

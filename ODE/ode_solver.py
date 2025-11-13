@@ -1,6 +1,7 @@
-import jax
-jax.config.update("jax_enable_x64", True)
+# import jax
+# jax.config.update("jax_enable_x64", True)
 import numpy as np
+from types import SimpleNamespace
 
 #==================================================================
 class ODE_Legendre():
@@ -18,6 +19,12 @@ class ODE_Legendre():
                 for i in range(nbasis):
                     up[it,ii] += ucoeff[it, i] * self.psi[i](x)
         return meshp, up
+    def reference_integration(self, degree):
+        x, w = np.polynomial.legendre.leggauss(degree)
+        psivals = np.empty(shape=(len(x), self.k+1))
+        for i in range(self.k+1):
+            psivals[:, i] = self.psi[i](x)
+        return SimpleNamespace(x=x, w=w, n=len(x), psi=psivals)
     def construct_basis_and_matrices(self, k:int):
         # we need order 2k+2 for coefficient and order k+2 for rhs
         import math
@@ -35,17 +42,19 @@ class ODE_Legendre():
             q = self.psi[i].integ()
             self.phi.append(q-q(-1))
             # assert self.phi[-1].deriv() == self.psi[-1]
-        int_coeff = np.polynomial.legendre.leggauss(2*k+2)
-        self.int_coeff_x, self.int_coeff_w = np.array(int_coeff[0]), np.array(int_coeff[1])
-        int_rhs = np.polynomial.legendre.leggauss(k+2)
-        self.int_rhs_x, self.int_rhs_w = np.array(int_rhs[0]), np.array(int_rhs[1])
-        self.int_coeff_n, self.int_rhs_n = len(self.int_coeff_x), len(self.int_rhs_x)
+        self.integration = {'coeff': self.reference_integration(2 * k + 2),
+                            'rhs': self.reference_integration(k + 2),
+                            'est': self.reference_integration(3 * k + 3)}
         nbasis = k+1
         assert len(self.phi) == nbasis
-        M = np.empty(shape=(nbasis,nbasis,self.int_coeff_n))
-        Mold = np.empty(shape=(nbasis,self.int_coeff_n))
-        B = np.empty(shape=(nbasis,self.int_rhs_n))
-        Bold = np.empty(shape=(self.int_rhs_n))
+
+        integ_coef = self.integration['coeff']
+        integ_rhs = self.integration['rhs']
+
+        M = np.empty(shape=(nbasis, nbasis, integ_coef.n))
+        Mold = np.empty(shape=(nbasis, integ_coef.n))
+        B = np.empty(shape=(nbasis, integ_rhs.n))
+        Bold = np.empty(shape=(integ_rhs.n))
         T = np.zeros(shape=(nbasis))
         T[0] = -1
         for i in range(1,nbasis): T[i] = 2.0/(1.0+2.0*i)
@@ -54,41 +63,31 @@ class ODE_Legendre():
         self.midpoint = np.empty(shape=(n_midpoint))
         for k in range(n_midpoint):
             self.midpoint[k] = (-1)**k * math.comb(2*k, k) / 4**k
-        for ii in range(self.int_coeff_n):
-            w, x =self.int_coeff_w[ii], self.int_coeff_x[ii]
+        for ii in range(integ_coef.n):
+            w, x = integ_coef.w[ii], integ_coef.x[ii]
             for i in range(nbasis):
                 Mold[i, ii] = w * (1.0 - self.phi[0](x)) * self.psi[i](x)
                 for j in range(nbasis):
                     M[i, j, ii] = w * self.phi[i](x) * self.psi[j](x)
-        for ii in range(self.int_rhs_n):
-            w, x =self.int_rhs_w[ii], self.int_rhs_x[ii]
+        for ii in range(integ_rhs.n):
+            w, x = integ_rhs.w[ii], integ_rhs.x[ii]
             Bold[ii] = w * (1.0 - self.phi[0](x))
             for i in range(nbasis):
                 B[i, ii] = w * self.phi[i](x)
-        # print(f"{Mold=}\n {np.sum(M, axis=2)=}")
-        self.M, self.T, self.B, self.Mold, self.Bold =  np.array(M), np.array(T), np.array(B), np.array(Mold), np.array(Bold)
-        psi_val, dpsi_val = np.empty(shape=(self.int_coeff_n,nbasis)), np.empty(shape=(self.int_coeff_n,nbasis))
-        for ii in range(self.int_coeff_n):
-            w, x =self.int_coeff_w[ii], self.int_coeff_x[ii]
-            for i in range(nbasis):
-                psi_val[ii, i] = self.psi[i](x)
-                dpsi_val[ii, i] = self.psi[i].deriv()(x)
-        self.psival_coeff, self.dpsival_coeff = np.array(psi_val), np.array(dpsi_val)
-        psi_val = np.empty(shape=(self.int_rhs_n,nbasis))
-        for ii in range(self.int_rhs_n):
-            w, x =self.int_rhs_w[ii], self.int_rhs_x[ii]
-            for i in range(nbasis):
-                psi_val[ii, i] = self.psi[i](x)
-        self.psival_rhs = np.array(psi_val)
+        # print(f"{Mold=}\n {M=}")
+        self.M, self.T, self.B, self.Mold, self.Bold =  M, T, B, Mold, Bold
         Mprolo = np.zeros(shape=(2,nbasis,nbasis))
-        for ii in range(self.int_coeff_n):
-            w, x =self.int_coeff_w[ii], self.int_coeff_x[ii]
+        for ii in range(integ_coef.n):
+            w, x = integ_coef.w[ii], integ_coef.x[ii]
             for i in range(nbasis):
                 scale = 0.5*(2.0*i + 1.0)
                 for j in range(nbasis):
                     Mprolo[0,i,j] += w*scale*self.psi[i](x)*self.psi[j](0.5*(x-1.0))
                     Mprolo[1,i,j] += w*scale*self.psi[i](x)*self.psi[j](0.5*(x+1.0))
         self.Mprolo = Mprolo
+        j = np.arange(self.k)
+        self.GdiagInv = (2 * j + 1.0)/2.0  # shape (nbp,)
+
     def __init__(self, k=0):
         self.name = self.__class__.__name__ + f"_{k}"
         self.construct_basis_and_matrices(k)
@@ -99,254 +98,194 @@ class ODE_Legendre():
         plt.subplot(121)
         for i in range(len(self.phi)):
             plt.plot(t, self.psi[i](t), '-', label=fr"$\psi_{{{i}}}$")
-            # plt.plot(t, self.psi[i](t), '-', label=r"$\psi_{:1d}$".format(i))
         plt.legend()
         plt.grid()
         plt.subplot(122)
         for i in range(len(self.phi)):
             plt.plot(t, self.phi[i](t), '-', label=fr"$\phi_{{{i}}}$")
-            # plt.plot(t, self.phi[i](t), '-', label=r"$\phi_{:1d}$".format(i))
         plt.legend()
         plt.grid()
         plt.show()
-    def get_a_values(self, mesh, app, ncomp):
-        nt = mesh.shape[0]
-        tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
-        t_coeff = tm[:, None] + dt[:, None] * self.int_coeff_x[None, :]  # (nt-1, self.int_coeff_n)
-        a_vec = np.stack([app.a_coef(ti) for ti in t_coeff.flatten()])  # ((nt-1)*self.int_coeff_n, ncomp, ncomp)
-        a_vals = a_vec.reshape(nt - 1, self.int_coeff_n, ncomp, ncomp)  # (nt-1, self.int_coeff_n, ncomp, ncomp)
-        return a_vals
-    def get_b_values(self, mesh, app, ncomp, int_x):
-        nt = mesh.shape[0]
-        int_n = len(int_x)
-        tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
-        t_rhs = tm[:, None] + dt[:, None] * int_x[None, :]  # (nt-1, int_n)
-        b_vec = np.stack([app.b_coef(ti) for ti in t_rhs.flatten()])  # ( (nt-1)*int_n, ncomp)
-        b_vals = b_vec.reshape(nt - 1, int_n, ncomp)  # (nt-1, nq_rhs, ncomp)
-        return b_vals
-    def run_linear_old(self, mesh, app):
-        nt = mesh.shape[0]
-        assert mesh.ndim == 1
-        nbasis = len(self.phi)
-        ncomp = 1 if np.ndim(app.u0) == 0 else len(app.u0)
-        nq_coeff = self.int_coeff_n
-        nq_rhs = self.int_rhs_n
-        # Output arrays
-        u_coef = np.empty((nt - 1, nbasis, ncomp), dtype=self.M.dtype)
-        u_T = np.zeros(ncomp, dtype=self.M.dtype)
-        bloc = np.zeros((nbasis, ncomp), dtype=self.M.dtype)
-        Aloc = np.zeros((nbasis, nbasis, ncomp, ncomp), dtype=self.M.dtype)
-        # --- Precompute quadrature points for all elements
-        tm = 0.5 * (mesh[:-1] + mesh[1:])
+    def x_norm(self, mesh, xall):
+        x, xT = xall
         dt = 0.5 * (mesh[1:] - mesh[:-1])
-        # t_rhs = tm[:, None] + dt[:, None] * self.int_rhs_x[None, :]  # (nt-1, nq_rhs)
-        # t_coeff = tm[:, None] + dt[:, None] * self.int_coeff_x[None, :]  # (nt-1, nq_coeff)
-        a_vals = self.get_a_values(mesh, app, ncomp)
-        b_vals = self.get_b_values(mesh, app, ncomp, self.int_rhs_x)
-        # a_vals, b_vals = self.get_ab_values(app, t_coeff, t_rhs, nt, ncomp, nq_rhs, nq_coeff)
-        # --- Main element loop
-        for it in range(nt - 1):
-            # --- Right-hand side
-            for ii in range(self.int_rhs_n):
-                bloc[:, :] -= dt[it] * self.B[:, ii][:, None] * b_vals[it, ii]
-            if it == 0:
-                bloc[0] -= app.u0
-            # --- Assemble local matrix
-            Aloc.fill(0)
-            Aloc[np.arange(nbasis), np.arange(nbasis)] = self.T[:, None, None] * np.eye(ncomp)
-            Aloc += dt[it] * np.einsum('ijq,qab->ijab', self.M, a_vals[it])
-            # --- Solve local system
-            usol = np.linalg.solve(
-                Aloc.swapaxes(1, 2).reshape(nbasis * ncomp, nbasis * ncomp),
-                bloc.flat
-            ).reshape((nbasis, ncomp))
-            u_coef[it] = usol
-            # --- Update u_T
-            u_T = -self.T[0] * usol[0]
-            u_T += dt[it] * np.tensordot(self.Bold, b_vals[it], axes=([0], [0]))
-            for ii in range(self.int_coeff_n):
-                u_T += dt[it] * np.sum(self.Mold[:, ii, None] * (a_vals[it, ii] @ usol.T).T, axis=0)
-            # --- Prepare bloc for next element
-            if it != nt - 1:
-                bloc.fill(0)
-                bloc[0] = -u_T
-        return u_coef, u_T
-    def run_linear(self, mesh, app):
-        nt = mesh.shape[0]
-        assert mesh.ndim == 1
-        nbasis = len(self.phi)
-        ncomp = 1 if np.ndim(app.u0) == 0 else len(app.u0)
-        # Output arrays
-        u_coef = np.empty((nt - 1, nbasis, ncomp), dtype=self.M.dtype)
-        u_T = np.zeros(ncomp, dtype=self.M.dtype)
-        bloc = np.zeros((nbasis, ncomp), dtype=self.M.dtype)
-        Aloc = np.zeros((nbasis, nbasis, ncomp, ncomp), dtype=self.M.dtype)
-        # --- Precompute quadrature points for all elements
-        tm = 0.5 * (mesh[:-1] + mesh[1:])
-        dt = 0.5 * (mesh[1:] - mesh[:-1])
-        t_coeff = tm[:, None] + dt[:, None] * self.int_coeff_x[None, :]  # (nt-1, self.int_coeff_n)
-        # a_vals = np.zeros((nt - 1, nbasis, nbasis, ncomp, ncomp), dtype=self.M.dtype)
-        # a0_vals = np.zeros((nt - 1, nbasis, ncomp, ncomp), dtype=self.M.dtype)
-        # for it in range(nt - 1):
-        #     for iint in range(self.int_coeff_n):
-        #         A = app.a_coef(t_coeff[it, iint]).squeeze()
-        #         for ii in range(nbasis):
-        #             a0_vals[it, ii] += dt[it] * self.Mold[ii, iint] * A
-        #             for jj in range(nbasis):
-        #                 a_vals[it, ii, jj] += dt[it]*self.M[ii,jj, iint]*A
-        # A_all = app.a_coef(t_coeff.ravel()).reshape(nt - 1, self.int_coeff_n, ncomp, ncomp)
-        A_all = np.empty((nt - 1, self.int_coeff_n, ncomp, ncomp), dtype=self.M.dtype)
-        for it in range(nt - 1):
-            for iint in range(self.int_coeff_n):
-                A_all[it, iint] = app.a_coef(t_coeff[it, iint])
-        a0_vals = np.einsum('t, iq, tqkl -> ti kl',dt, self.Mold, A_all)
-        a_vals = np.einsum('t, ijq, tqkl -> tijkl',dt, self.M, A_all)
-        rhs1 = np.zeros(shape=(nt, ncomp), dtype=self.M.dtype)
-        rhs2 = np.zeros(shape=(nt - 1, nbasis - 1, ncomp), dtype=self.M.dtype)
-        tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
-        t_rhs = tm[:, None] + dt[:, None] * self.int_rhs_x[None, :]  # (nt-1, int_n)
-        rhs1[0] = -app.u0
-        # for it in range(nt - 1):
-        #     for iint in range(self.int_rhs_n):
-        #         b = app.b_coef(t_rhs[it, iint])
-        #         if b.shape[0] == 1: b = b.squeeze()
-        #         rhs1[it] -= dt[it] * self.B[0, iint] * b
-        #         rhs1[it + 1] -= dt[it] * self.Bold[iint] * b
-        #         rhs2[it] -= dt[it]*np.einsum('i,a->ia',  self.B[1:, iint], b)
-        b_all = np.empty((nt - 1, self.int_rhs_n, ncomp), dtype=self.M.dtype)
-        for it in range(nt - 1):
-            for iint in range(self.int_rhs_n):
-                b_all[it, iint, :] = app.b_coef(t_rhs[it, iint])
-        # print(f"{b_all.shape=}")
-        rhs1[:-1] -= np.einsum('t,i,tic->tc', dt, self.B[0], b_all)
-        rhs1[1:] -= np.einsum('t,i,tic->tc', dt, self.Bold, b_all)
-        rhs2 -= np.einsum('t, bi,tic->tbc', dt, self.B[1:], b_all)
+        integ = self.integration['coeff']
+        x_vals = np.einsum('tjc,qj->tqc', x, integ.psi)
+        return np.einsum('t,q,tqc->', dt, integ.w, x_vals**2)
 
-        # --- Main element loop
-        for it in range(nt - 1):
-            # --- Right-hand side
-            bloc[0,:] += rhs1[it]
-            bloc[1:,:] += rhs2[it,:,:]
-            Aloc.fill(0)
-            Aloc[np.arange(nbasis), np.arange(nbasis)] = self.T[:, None, None] * np.eye(ncomp)
-            Aloc += a_vals[it]
-            # --- Solve local system
-            # print(f"@@ {it=}: {bloc=} {Aloc=} {a_vals[it]=}")
-            usol = np.linalg.solve(
-                Aloc.swapaxes(1, 2).reshape(nbasis * ncomp, nbasis * ncomp),
-                bloc.flat
-            ).reshape((nbasis, ncomp))
-            u_coef[it] = usol
-            # --- Update u_T
-            u_T = -self.T[0] * usol[0]
-            u_T += np.einsum('icd,id->c', a0_vals[it], usol)
-            if it != nt - 1:
-                bloc.fill(0)
-                bloc[0] = -u_T
-            else:
-                u_T += rhs1[it+1]
-        return u_coef, u_T
-    def rhs(self, mesh, app):
-        nt = mesh.shape[0]
-        assert mesh.ndim == 1
-        nbasis = len(self.phi)
-        ncomp = 1 if np.ndim(app.u0) == 0 else len(app.u0)
-        rhs1 = np.zeros(shape=(nt, ncomp), dtype=self.M.dtype)
-        rhs2 = np.zeros(shape=(nt - 1, nbasis - 1, ncomp), dtype=self.M.dtype)
-        rhs1[0] = -app.u0
-        dt = 0.5 * (mesh[1:] - mesh[:-1])
-        b_vals = self.get_b_values(mesh, app, ncomp, self.int_rhs_x)
-        for it in range(nt - 1):
-            for ii in range(self.int_rhs_n):
-                rhs1[it] -= dt[it] * self.B[0, ii] * b_vals[it, ii]
-                rhs1[it + 1] -= dt[it] * self.Bold[ii] * b_vals[it, ii]
-                rhs2[it] -= dt[it] * self.B[1:, ii][:, None] * b_vals[it, ii]
-        return rhs1, rhs2
     def compute_residual(self, mesh, app, xall):
         nt = mesh.shape[0]
         assert mesh.ndim == 1
         nbasis = len(self.phi)
-        ncomp = 1 if np.ndim(app.u0) == 0 else len(app.u0)
+        ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
         rhs1 = np.zeros(shape=(nt, ncomp), dtype=self.M.dtype)
         rhs2 = np.zeros(shape=(nt - 1, nbasis - 1, ncomp), dtype=self.M.dtype)
-        dt = 0.5 * (mesh[1:] - mesh[:-1])
-        int_x = self.int_rhs_x
-        int_n = len(int_x)
         tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
-        t_rhs = tm[:, None] + dt[:, None] * int_x[None, :]  # (nt-1, int_n)
+
+        integ = self.integration['rhs']
+        t_rhs = tm[:, None] + dt[:, None] * integ.x[None, :]  # shape (nt-1, int_n)
+        nint = integ.n
+
         x, xT = xall
-        x_vals = np.einsum('ijc,qj->iqc', x, self.psival_rhs)
-        # print(f"{x.shape=} {t_rhs.shape=} {self.psival_rhs.shape=} {x_vals.shape=}")
-        rhs1[0] = -app.u0
+        # x_vals shape (nt-1, int_n, ncomp)
+        x_vals = np.einsum('ijc,qj->iqc', x, integ.psi)
+
+        # --- Evaluate f(t,u) at all quadrature points ---
+        # We collect all values and stack to (nt-1, int_n, ncomp)
+        f_all = np.zeros_like(x_vals)
         for it in range(nt - 1):
-            for ii in range(int_n):
-                f_vals = app.f(x_vals[it, ii])
-                # print(f"{f_vals=} {x_vals[it, ii]=}")
-                rhs1[it] -= dt[it] * self.B[0, ii] * f_vals
-                rhs1[it + 1] -= dt[it] * self.Bold[ii] * f_vals
-                rhs2[it] -= dt[it] * self.B[1:, ii][:, None] * f_vals
-        #derivative
-        for it in range(nt - 1):
-            rhs1[it] -= self.T[0]*x[it,0]
-            rhs1[it+1] += self.T[0]*x[it, 0]
-            for ii in range(nbasis - 1):
-                rhs2[it,ii] -= self.T[ii+1]*x[it, ii + 1]
-        rhs1[nt-1] += xT
+            for ii in range(nint):
+                f_all[it, ii] = app.f(t_rhs[it, ii], x_vals[it, ii])
+
+        # --- Quadrature (vectorized) ---
+        rhs1[0] = -app.x0
+        rhs1[:-1] -= np.einsum('t,i,tic->tc', dt, self.B[0], f_all)
+        rhs1[1:] -= np.einsum('t,i,tic->tc', dt, self.Bold, f_all)
+        rhs2 -= np.einsum('t,bi,tic->tbc', dt, self.B[1:], f_all)
+
+        # --- Derivative contributions ---
+        # print(f"{nt=} {self.T[0]=} {x[:-1, 0].shape=} {rhs1[:-1].shape=}")
+        rhs1[:-1] -= self.T[0] * x[:, 0]
+        rhs1[1:] += self.T[0] * x[:, 0]
+        rhs2 -= np.einsum('b,tbq->tbq', self.T[1:], x[:, 1:])
+        # print(f"rhs1[-1] = {rhs1[-1]} {xT=}")
+        rhs1[-1] += xT
         return rhs1, rhs2
+
     def get_a_linearized(self, mesh, app, xall):
         x, xT = xall
         nt = mesh.shape[0]
-        nbasis = len(self.phi)
-        ncomp = 1 if np.ndim(app.u0) == 0 else len(app.u0)
-        int_x = self.int_coeff_x
-        int_n = len(int_x)
+        ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
+        integ = self.integration['coeff']
         tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
-        t_coeff = tm[:, None] + dt[:, None] * int_x[None, :]  # (nt-1, self.int_coeff_n)
-        x_vals = np.einsum('ijc,qj->iqc', x, self.psival_coeff)
-        a_vals = np.zeros((nt - 1, nbasis, nbasis, ncomp, ncomp), dtype=self.M.dtype)
-        a0_vals = np.zeros((nt - 1, nbasis, ncomp, ncomp), dtype=self.M.dtype)
-        for it in range(nt - 1):
-            for iint in range(int_n):
-                A = app.df(x_vals[it, iint])
-                for ii in range(nbasis):
-                    a0_vals[it, ii] += dt[it] * self.Mold[ii, iint] * A
-                    for jj in range(nbasis):
-                        a_vals[it, ii, jj] += dt[it]*self.M[ii,jj, iint]*A
+        t_coeff = tm[:, None] + dt[:, None] * integ.x[None, :]  # (nt-1, self.int_coeff_n)
+        x_vals = np.einsum('ijc,qj->iqc', x, integ.psi)
+        A_vals = np.stack([app.df(t, u) for t, u in zip(t_coeff.ravel(), x_vals.reshape(-1, ncomp))])
+        A_vals = A_vals.reshape(nt - 1, integ.n, ncomp, ncomp)
+        a0_vals = np.einsum('t,iq,tqnm->tinm', dt, self.Mold, A_vals)
+        a_vals = np.einsum('t,ijq,tqnm->tijnm', dt, self.M, A_vals)
         return a_vals, a0_vals
     def solve_linearized(self, mesh, app, x, res):
         rhs1, rhs2 = res
         nt = mesh.shape[0]
         assert mesh.ndim == 1
         nbasis = len(self.phi)
-        ncomp = 1 if np.ndim(app.u0) == 0 else len(app.u0)
-        # Output arrays
-        u_coef = np.empty((nt - 1, nbasis, ncomp), dtype=self.M.dtype)
-        u_T = np.zeros(ncomp, dtype=self.M.dtype)
+        ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
+        x_coef = np.empty((nt - 1, nbasis, ncomp), dtype=self.M.dtype)
         bloc = np.zeros((nbasis, ncomp), dtype=self.M.dtype)
-        Aloc = np.zeros((nbasis, nbasis, ncomp, ncomp), dtype=self.M.dtype)
-        dt = 0.5 * (mesh[1:] - mesh[:-1])
+        Aloc_template = np.zeros((nbasis, nbasis, ncomp, ncomp), dtype=self.M.dtype)
+        for i in range(nbasis):
+            Aloc_template[i, i, :, :] = np.eye(ncomp) * self.T[i]
         a_vals, a0_vals = self.get_a_linearized(mesh, app, x)
         for it in range(nt - 1):
             bloc[0,:] += rhs1[it]
             bloc[1:,:] += rhs2[it]
-            Aloc.fill(0)
-            Aloc[np.arange(nbasis), np.arange(nbasis)] = self.T[:, None, None] * np.eye(ncomp)
-            Aloc += a_vals[it]
+            Aloc = Aloc_template + a_vals[it]
+            Aflat = Aloc.swapaxes(1, 2).reshape(nbasis * ncomp, nbasis * ncomp)
             # --- Solve local system
-            # print(f"{it=}: {bloc=} {Aloc=} {a_vals[it]=}")
-            usol = np.linalg.solve(
-                Aloc.swapaxes(1, 2).reshape(nbasis * ncomp, nbasis * ncomp),
-                bloc.flat
-            ).reshape((nbasis, ncomp))
-            u_coef[it] = usol
-            u_T = -self.T[0] * usol[0]
-            u_T += np.einsum('icd,id->c', a0_vals[it], usol)
-            if it != nt - 1:
+            xsol = np.linalg.solve(Aflat, bloc.ravel()).reshape((nbasis, ncomp))
+            # print(f"{it=}: {bloc.squeeze()=} {Aloc.squeeze()=} {usol.squeeze()=}")
+            x_coef[it] = xsol
+            bloc.fill(0)
+            bloc[0] = self.T[0] * xsol[0] - np.einsum('icd,id->c', a0_vals[it], xsol)
+        x_T = - bloc[0] - rhs1[-1]
+        return x_coef, x_T
+    def solve_linear(self, mesh, app):
+        ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
+        x0 = np.zeros(shape=(len(mesh) - 1, self.k + 1, ncomp), dtype=mesh.dtype)
+        x = (x0, np.zeros(x0.shape[2]))
+        res = self.compute_residual(mesh, app, x)
+        # print(f"res = {res}")
+        du_h = self.solve_linearized(mesh, app, x, res)
+        # print(f"du_h = {du_h}")
+        xnew = (x[0] + du_h[0], x[1] + du_h[1])
+        # print(f"xnew = {xnew}")
+        res = self.compute_residual(mesh, app, xnew)
+        print(f"res = {np.linalg.norm(res[0])+np.linalg.norm(res[1])}")
+        return xnew
+
+    def _get_a_linearized(self, it, tm, dt, mesh, app, xall):
+        x, xT = xall
+        nt = mesh.shape[0]
+        ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
+        integ = self.integration['coeff']
+        t_coeff = tm + dt * integ.x[:]
+        x_vals = np.einsum('jc,qj->qc', x[it], integ.psi)
+        A_vals = np.stack([app.df(t, u) for t, u in zip(t_coeff.ravel(), x_vals.reshape(-1, ncomp))])
+        A_vals = A_vals.reshape(integ.n, ncomp, ncomp)
+        a0_vals = dt *np.einsum('iq,qnm->inm', self.Mold, A_vals)
+        a_vals = dt *np.einsum('ijq,qnm->ijnm', self.M, A_vals)
+        return a_vals, a0_vals
+    def _compute_residual(self, it, tm, dt, mesh, app, xall):
+        nt = mesh.shape[0]
+        assert mesh.ndim == 1
+        nbasis = len(self.phi)
+        ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
+        rhs1 = np.zeros(shape=(ncomp), dtype=self.M.dtype)
+        rhs1old = np.zeros(shape=(ncomp), dtype=self.M.dtype)
+        rhs2 = np.zeros(shape=(nbasis - 1, ncomp), dtype=self.M.dtype)
+        # tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
+
+        integ = self.integration['rhs']
+        t_rhs = tm + dt * integ.x
+        nint = integ.n
+
+        x, xT = xall
+        # x_vals shape (nt-1, int_n, ncomp)
+        x_vals = np.einsum('jc,qj->qc', x[it], integ.psi)
+
+        # --- Evaluate f(t,u) at all quadrature points ---
+        # We collect all values and stack to (nt-1, int_n, ncomp)
+        f_all = np.zeros_like(x_vals)
+        for ii in range(nint):
+            f_all[ii] = app.f(t_rhs[ii], x_vals[ii])
+
+        # --- Quadrature (vectorized) ---
+        if it==0: rhs1 = -app.x0
+        rhs1 -= dt*np.einsum('i,ic->c', self.B[0], f_all)
+        rhs1old = -dt*np.einsum('i,ic->c',  self.Bold, f_all)
+        rhs2 = -dt*np.einsum('bi,ic->bc', self.B[1:], f_all)
+
+        # --- Derivative contributions ---
+        # print(f"{nt=} {self.T[0]=} {x[:-1, 0].shape=} {rhs1[:-1].shape=}")
+        rhs1 -= self.T[0] * x[it][0]
+        rhs1old += self.T[0] * x[it][0]
+        rhs2 -= np.einsum('b,bq->bq', self.T[1:], x[it,1:])
+        # print(f"rhs1[-1] = {rhs1[-1]} {xT=}")
+        rhs1[-1] += xT
+        return rhs1, rhs2
+    def solve_semi_implicit(self, mesh, app, x):
+        rhs1_all, rhs2_all = self.compute_residual(mesh, app, x)
+        nt = mesh.shape[0]
+        assert mesh.ndim == 1
+        nbasis = len(self.phi)
+        ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
+        x_coef = np.empty((nt - 1, nbasis, ncomp), dtype=self.M.dtype)
+        x_T = np.zeros(ncomp, dtype=self.M.dtype)
+        bloc = np.zeros((nbasis, ncomp), dtype=self.M.dtype)
+        Aloc_template = np.zeros((nbasis, nbasis, ncomp, ncomp), dtype=self.M.dtype)
+        for i in range(nbasis):
+            Aloc_template[i, i, :, :] = np.eye(ncomp) * self.T[i]
+        # a_vals, a0_vals = self.get_a_linearized(mesh, app, x)
+        tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
+        for it in range(nt - 1):
+            rhs1, rhs2 = self._compute_residual(it, tm[it], dt[it], mesh, app, x)
+            bloc[0,:] += rhs1
+            bloc[1:,:] += rhs2
+            a_vals, a0_vals = self._get_a_linearized(it, tm[it], dt[it], mesh, app, x)
+            Aloc = Aloc_template + a_vals
+            Aflat = Aloc.swapaxes(1, 2).reshape(nbasis * ncomp, nbasis * ncomp)
+            # --- Solve local system
+            xsol = np.linalg.solve(Aflat, bloc.ravel()).reshape((nbasis, ncomp))
+            # print(f"{it=}: {bloc.squeeze()=} {Aloc.squeeze()=} {usol.squeeze()=}")
+            x_coef[it] = xsol
+            x_T = np.einsum('icd,id->c', a0_vals, xsol) - self.T[0] * xsol[0]
+            if it < nt - 2:
                 bloc.fill(0)
-                bloc[0] = -u_T
+                bloc[0] = -x_T
             else:
-                u_T += rhs1[it+1]
-        return u_coef, u_T
+                x_T -= rhs1_all[it + 1]
+        return x_coef, x_T
     def interpolate_midpoint(self, mesh, ucoeff):
         u_h, u_T = ucoeff
         # print(f"{u_h.shape=} {u_T.shape=}")
@@ -362,59 +301,63 @@ class ODE_Legendre():
     def compute_error(self, mesh, ucoeff, solution):
         u_h, u_T = ucoeff
         nbasis, ncomp = u_h.shape[1], u_h.shape[2]
-        x_q = np.array(self.int_coeff_x)  # shape (nq,)
-        w_q = np.array(self.int_coeff_w)  # shape (nq,)
+        integ = self.integration['coeff']
+        # x_q = np.array(self.int_coeff_x)  # shape (nq,)
+        # w_q = np.array(self.int_coeff_w)  # shape (nq,)
         # Midpoints and half-widths for all elements
         tm = 0.5 * (mesh[:-1] + mesh[1:])  # shape (nt-1,)
         dt = 0.5 * (mesh[1:] - mesh[:-1])  # shape (nt-1,)
         # Compute global quadrature points for all elements
-        t_q = tm[:, None] + dt[:, None] * x_q[None, :]  # shape (nt-1, nq)
+        t_q = tm[:, None] + dt[:, None] * integ.x[None, :]  # shape (nt-1, nq)
         # Evaluate solution at all quadrature points
         sol_q = np.array([np.atleast_1d(solution(t)) for t in t_q])  # shape (nq, ncomp)
         if sol_q.ndim == 2:  sol_q = sol_q[:, :, None]
         # Evaluate basis functions at quadrature points
-        psi_eval = np.array([[psi(x) for psi in self.psi] for x in x_q])  # shape (nq, nbasis)
+        psi_eval = np.array([[psi(x) for psi in self.psi] for x in integ.x])  # shape (nq, nbasis)
         u_approx = np.einsum('ebk,qb->eqk', u_h, psi_eval)
         # Compute element-wise error
         err = sol_q - u_approx  # shape (nt-1, nq, ncomp)
         # L2 error over elements
-        err_l2 = np.sum(dt[:, None] * np.sum(w_q[None, :, None] * err ** 2, axis=1))
+        err_l2 = np.sum(dt[:, None] * np.sum(integ.w[None, :, None] * err ** 2, axis=1))
         # Store error per element
-        err_cell = np.sum(dt[:, None] * np.sum(w_q[None, :, None] * err ** 2, axis=1), axis=1)
-        # Discontinuous error using separate quadrature (int_disc)
-        # x_disc, w_disc = np.polynomial.legendre.leggauss(nbasis)  # shape (nbasis,)
-        # t_disc = tm[:, None] + dt[:, None] * x_disc[None, :]
-        # sol_disc = np.stack([solution(td) for td in t_disc])  # shape (nt-1, nq_disc, ncomp)
-        # psi_disc = np.array([[psi(x) for psi in self.psi] for x in x_disc])  # (nq_disc, nbasis)
-        # u_approx_disc = np.einsum('ebk,qb->eqk', u_h, psi_disc)
-        # if sol_disc.ndim == 2:  sol_disc = sol_q[:, :, None]
-        # err_disc_arr = sol_disc - u_approx_disc
-        # err_disc = np.sum(dt[:, None] * np.sum(w_disc[None, :, None] * err_disc_arr ** 2, axis=1))
-        # return np.sqrt(err_l2), np.sqrt(err_disc), err_cell
+        err_cell = np.sum(dt[:, None] * np.sum(integ.w[None, :, None] * err ** 2, axis=1), axis=1)
         return np.sqrt(err_l2), err_cell
-    def estimator(self, mesh, ucoeff, app):
-        u_h, u_T = ucoeff
-        # nt = mesh.shape[0]
-        ncomp = u_h.shape[-1]
-        # nq = len(self.int_coeff_x)
-        # eta = np.zeros(shape=(nt-1), dtype=u_h.dtype)
+    def _compute_cellwide_L2projection(self, res, integ, dt):
+        psi_eval = integ.psi  # shape (nq, nbasis)
+        psi_proj = psi_eval[:, :self.k]  # (nq, nbp)
+        alpha = np.einsum('q,j,qj,tqc->tjc', integ.w, self.GdiagInv, psi_proj, res)
+        # reconstruct projection at quadrature points: proj_{t,q,c} = psi_proj[q,j] * alpha_{t,j,c}
+        proj = np.einsum('qj,tjc->tqc', psi_proj, alpha)  # (nt-1, nq, ncomp)
+        # remainder and L2 per element (same as before)
+        rtil = res - proj
+        r2_sumc = np.sum(rtil ** 2, axis=2)  # (nt-1, nq)
+        return np.einsum('t, q,tq->t', dt ** 3, integ.w, r2_sumc)
+    def estimator(self, mesh, xall, pall, app):
+        x, xT = xall
+        p, pT = pall
+        nt = mesh.shape[0]
+        nbasis, ncomp = x.shape[1], x.shape[2]
         # h = 2*dt!!
-        scale = 4/np.pi**2/(self.k+1.0)**2
+        scale = 4.0/np.pi**2/(self.k+1.0)**2
         tm = 0.5 * (mesh[:-1] + mesh[1:])
         dt = 0.5 * (mesh[1:] - mesh[:-1])
-        # t_ii = tm[:, None] + dt[:, None] * self.int_coeff_x[None, :]
-        u_ap = np.einsum('ejk,qj->eqk', u_h, self.psival_coeff)  # e=element, q=quad, k=dim
-        du_ap = np.einsum('ejk,qj->eqk', u_h, self.dpsival_coeff)
-        # a_vals, b_vals = self.get_ab_values(app, t_ii, t_ii, nt, ncomp, nq, nq)
-        a_vals = self.get_a_values(mesh, app, ncomp)
-        b_vals = self.get_b_values(mesh, app, ncomp, self.int_coeff_x)
-        res = np.einsum('eqab,eqb->eqa', a_vals, u_ap) + b_vals - du_ap / dt[:, None, None]
-
-        # --- Integrate elementwise estimator
-        w = self.int_coeff_w
-        eta_cell = scale * np.sum(w[None, :] * dt[:, None] ** 3 * np.sum(res ** 2, axis=-1), axis=1)
+        integ = self.integration['est']
+        x_vals = np.einsum('ejk,qj->eqk', x, integ.psi)  # e=element, q=quad, k=dim
+        p_vals = np.einsum('ejk,qj->eqk', p, integ.psi)  # e=element, q=quad, k=dim
+        t_est = tm[:, None] + dt[:, None] * integ.x[None, :]  # (nt-1, int_n)
+        res_eta = np.zeros(shape=(nt-1, integ.n, ncomp), dtype=self.M.dtype)
+        res_zeta = np.zeros(shape=(nt-1, integ.n, ncomp), dtype=self.M.dtype)
+        for it in range(nt - 1):
+            for ii in range(integ.n):
+                f_vals = app.f(t_est[it, ii], x_vals[it, ii])
+                df_vals = app.df(t_est[it, ii], x_vals[it, ii])
+                res_eta[it, ii] = f_vals
+                res_zeta[it, ii] = f_vals + df_vals @ p_vals[it, ii]
+        zeta_cell = scale * self._compute_cellwide_L2projection(res_zeta, integ, dt)
+        eta_cell = scale * self._compute_cellwide_L2projection(res_eta, integ, dt)
+        zeta_global = np.sqrt(np.sum(zeta_cell))
         eta_global = np.sqrt(np.sum(eta_cell))
-        return eta_global, eta_cell
+        return zeta_global, zeta_cell, eta_global, eta_cell
     def interpolate(self, ucoeff, mesh_new, refinfo):
         u_h, u_T = ucoeff
         # print(f"{mesh=}\n{mesh_new=}")
@@ -463,42 +406,43 @@ if __name__ == "__main__":
         types = {'n': 'i', 'solve': 'f', 'err': 'f', 'est': 'f', 'eff': 'f'}
         pr = printer.Printer(types=types)
         pr.print_names()
+        ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
         for it in range(niter):
             n *=2
             ns.append(n)
             mesh = mesh1d.mesh(app.t_begin, app.t_end, n, type=mesh_type)
             t0 = time.time()
-            # u_h = cgp.run_linear_old(mesh, app)
-            u_h = cgp.run_linear(mesh, app)
-            x0 = np.zeros_like(u_h[0])
-            x = (x0, u_h[1])
-            # x = (u_h[0], u_h[1])
+            x0 = np.zeros(shape=(len(mesh) - 1, cgp.k+1, ncomp), dtype=mesh.dtype)
+            x = (x0, np.zeros(x0.shape[2]))
             res = cgp.compute_residual(mesh, app, x)
-            print(f"{np.linalg.norm(res[0])=} {np.linalg.norm(res[1])=}")
-            du_h = cgp.solve_linearized(mesh, app, x, res)
-            print(f"{np.linalg.norm(du_h[0])=}")
+            # print(f"{np.linalg.norm(res[0])=} {np.linalg.norm(res[1])=}")
+            p = cgp.solve_linearized(mesh, app, x, res)
+            p2 = cgp.solve_semi_implicit(mesh, app, x)
+            assert np.allclose(p[0], p2[0]), "problem in 0"
+            assert np.allclose(p[1], p2[1]), "problem in 1"
+            # print(f"{np.linalg.norm(du_h[0])=}")
             # print(f"{u_h[0].squeeze()=}\n{du_h[0].squeeze()=}")
-            u_h = (x[0] + du_h[0], u_h[1])
+            x = (x[0] + p[0], x[1]+p[1])
             t1 = time.time()
-            el2, err = cgp.compute_error(mesh, u_h, app.solution)
+            el2, err = cgp.compute_error(mesh, x, app.solution)
             errs_l2.append(el2)
             t2 = time.time()
-            eta, eta_cell = cgp.estimator(mesh, u_h, app)
+            zeta, zeta_cell, eta, eta_cell = cgp.estimator(mesh, x, p, app)
             etas.append(eta)
             t3 = time.time()
             pr.values = {'n': n, 'solve': t1-t0, 'err': t2-t1, 'est': t3-t2, 'eff':el2/eta}
             pr.print()
             if plot:
-                t_mp, u_mp = cgp.interpolate_midpoint(mesh, u_h)
+                t_mp, u_mp = cgp.interpolate_midpoint(mesh, x)
                 u_true = app.solution(t_mp)
-                pd = {app.name:{}, "Error":{}, "Estimator":{}}
+                pd = {app.name:{}, "Estimator":{}}
                 pd[app.name]['x'] = t_mp
                 pd[app.name]['y'] = {'app': u_mp, 'sol': u_true}
                 pd[app.name]['kwargs'] = {'app':{'marker':'o'}}
-                pd["Error"]['x'] = t_mp
-                pd["Error"]['y'] = {'e': u_true-u_mp}
+                # pd["Error"]['x'] = t_mp
+                # pd["Error"]['y'] = {'e': u_true-u_mp}
                 pd["Estimator"]['x'] = t_mp
-                pd["Estimator"]['y'] = {'eta': eta_cell, 'err': np.abs(err)}
+                pd["Estimator"]['y'] = {'zeta': zeta_cell, 'eta': eta_cell, 'err': np.abs(err)}
                 plotting.plot_solutions(pd)
                 plt.show()
         ns = np.array(ns)
@@ -512,13 +456,13 @@ if __name__ == "__main__":
         plt.show()
 
 
-    # app = ode_examples.PolynomialIntegration(degree=4, ncomp=2)
+    # app = ode_examples.PolynomialIntegration(degree=9, ncomp=2)
     # app = ode_examples.Exponential(lam=1.2)
-    app = ode_examples.ExponentialJordan()
-    # app = ode_examples.TimeDependentShear()
+    # app = ode_examples.ExponentialJordan()
+    app = ode_examples.TimeDependentShear()
     # app = ode_examples.TimeDependentRotation(t_end = 24)
     # app.check_linear()
-    check_error(app, k=3, niter=6, n0=3, plot=True, mesh_type='random')
+    check_error(app, k=2, niter=12, n0=3, plot=False, mesh_type='random')
 
     # cgp = ODE_Legendre(k=3)
     # cgp.plot_basis()

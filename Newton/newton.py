@@ -19,7 +19,7 @@ class Newton:
     self.nd: Newton Driver supposed to provide
     """
     def __init__(self, **kwargs):
-        self.verbose = kwargs.pop('verbose', True)
+        self.verbose = kwargs.pop('verbose', 1)
         self.verbose_bt = kwargs.pop('verbose_bt', False)
         self.nd = kwargs.pop('nd', None)
         self.sdata = kwargs.pop('sdata', newtondata.StoppingParamaters())
@@ -40,16 +40,17 @@ class Newton:
                     print("{} {:>3} {:^10} {:^10}  {:^9}".format("bt", "it", "meritnew", "meritfirst", "step"))
             else:
                 step *= omega
-            x = x0 + step * dx
+            if hasattr(self.nd,'add_update'):
+                x = self.nd.add_update(x0, step, dx)
+            else:
+                x = x0 + step * dx
             residual_result = self.nd.computeResidual(x)
-            #     return SimpleNamespace(success=True, r=result.residual, rnorm=result.residual_norm,
-            #                            xnorm=result.x_norm, merit=result.meritvalue)
-            # residual_result = self.computeResidual(x)
             meritnew = residual_result.meritvalue
             if self.verbose_bt:
                 print(f"bt {it:3} {meritnew:10.3e} {meritfirst:10.3e} {step:9.2e}")
             if meritnew <= meritfirst + c*step*meritgrad:
                 result.x = x
+                # result.xnorm = xnorm
                 result.step = step
                 result.iter = it
                 result.residual_result = residual_result
@@ -60,22 +61,17 @@ class Newton:
         result.iter = maxiter
         return result
 
-    # #--------------------------------------------------------------------
-    # def computeResidual(self, x):
-    #     result = self.nd.computeResidual(x)
-    #     return SimpleNamespace(success=True, r=result.residual, rnorm=result.residual_norm,
-    #                            xnorm=result.x_norm, merit=result.meritvalue)
-    # --------------------------------------------------------------------
-    def solve(self, x0, **kwargs):
+    def solve(self, x, **kwargs):
         """
         Aims to solve F(x) = 0, starting at x0
         with backtracking Newton
         """
-        x0 = np.atleast_1d(x0)
+        # x0 = np.atleast_1d(x0)
         atol, rtol, atoldx, rtoldx = self.sdata.atol, self.sdata.rtol, self.sdata.atoldx, self.sdata.rtoldx
         divx = self.sdata.divx
         maxiter: int = kwargs.pop('maxiter', self.sdata.maxiter)
-        x = np.atleast_1d(x0)
+        # x = np.atleast_1d(x0)
+        # x = x0
         # if not x.ndim == 1:
         #     raise ValueError(f"{x.shape=}")
         self.iterdata.bad_convergence = False
@@ -109,7 +105,7 @@ class Newton:
             dx = result.update
             dxnorm_old = getattr(self, 'dxnorm', xnorm)
             dxnorm = result.update_norm
-            gradient_iteration = iteration and (dxnorm>20.0*dxnorm_old)
+            gradient_iteration = iteration and (dxnorm>self.sdata.dxincrease_max*dxnorm_old)
             btit=0
             if not gradient_iteration:
                 meritgrad = result.meritgrad
@@ -122,11 +118,10 @@ class Newton:
                 else:
                     gradient_iteration = True
             if gradient_iteration:
-                # print(f"=======Gradient step======")
+                if hasattr(self.nd, 'call_back_baxktrack_failed'):
+                    kwargs = {'btresult':btresult, 'dx':dx, 'r':res, 'dxnorm':dxnorm, 'dxnorm_old':dxnorm_old}
+                    self.nd.call_back_baxktrack_failed(**kwargs)
                 result = self.nd.computeResidual(x)
-                #     return SimpleNamespace(success=True, r=result.residual, rnorm=result.residual_norm,
-                #                            xnorm=result.x_norm, merit=result.meritvalue)
-                # result = self.computeResidual(x)
                 res, resnorm, meritvalue, xnorm = result.residual, result.residual_norm, result.meritvalue, result.x_norm
                 result = self.nd.computeUpdateSimple(r=res, x=x, info=self.iterdata)
                 dx = result.update
@@ -149,7 +144,7 @@ class Newton:
                     return x, self.iterdata
             # dxnorm = np.linalg.norm(dx)
             self.iterdata.newstep(dxnorm, liniter, resnorm, step)
-            xnorm = np.linalg.norm(x)
+            # xnorm = np.linalg.norm(x)
             self.printer.values['it'] = self.iterdata.iter
             self.printer.values['|r|'] = resnorm
             self.printer.values['|dx|'] = self.iterdata.dxnorm[-1]
@@ -164,7 +159,8 @@ class Newton:
                 self.printer.values['name'] = self.name
             self.printer.print()
             if hasattr(self.nd, 'call_back'):
-                self.nd.call_back(x)
+                kwargs = {'x':x, 'iterdata':self.iterdata}
+                self.nd.call_back(**kwargs)
             if resnorm<tol:
                 return x, self.iterdata
             if xnorm >= divx:

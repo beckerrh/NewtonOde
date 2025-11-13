@@ -34,7 +34,10 @@ def plot_solutions(plot_dicts, title=None):
     if not isinstance(axes, np.ndarray): axes = [axes]
     for ax, (k,v) in zip(axes, plot_dicts.items()):
         ax.set_title(k)
-        plot_solutions_single(ax, v)
+        try:
+            plot_solutions_single(ax, v)
+        except:
+            raise KeyError(f"problem in key {k}")
     # plt.show()
 def plot_error_curves(plot_dicts):
     for k,v in list(plot_dicts.items()):

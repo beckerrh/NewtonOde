@@ -80,7 +80,7 @@ class CgK():
         app.type = 'numpy'
         if linearization is not None:
             utilde_node, utilde_coef = linearization
-        u_ic = app.u0
+        u_ic = app.x0
         nt = t.shape[0]
         dim = 1 if type(u_ic) == float else len(u_ic)
         apphasl = hasattr(app,'l')

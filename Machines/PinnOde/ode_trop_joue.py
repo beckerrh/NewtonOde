@@ -67,7 +67,7 @@ class ModelEdo:
     def __init__(self, app, machine, n_colloc):
         self.app, self.machine = app, machine
         self.nbases = machine.layers[-1]
-        self.nout = 1 if type(app.u0)==float else len(app.u0)
+        self.nout = 1 if type(app.x0)==float else len(app.x0)
         self.t_colloc =  np.linspace(app.t_begin, app.t_end, n_colloc)
     def init_params(self):
         params_mach = self.machine.init_params()
@@ -89,7 +89,7 @@ class ModelEdo:
     def residual_edo(self, params_mach, coeff):
         return jax.vmap(lambda t: self.residual_edo_single(params_mach, coeff, t))(self.t_colloc)
     def residual_bdry(self, params_mach, coeff):
-        return self.forward(params_mach, coeff, self.t_colloc[0])-self.app.u0
+        return self.forward(params_mach, coeff, self.t_colloc[0])-self.app.x0
     def loss(self, params_mach, coeff):
         res_dom = self.residual_edo(params_mach, coeff)
         res_bdry = self.residual_bdry(params_mach, coeff)

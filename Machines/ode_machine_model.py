@@ -64,7 +64,7 @@ class ModelOde:
     def residual_ode(self, machine):
         return jax.vmap(lambda t: self.residual_ode_single(machine, t))(self.t_colloc)
     def residual_bc(self, machine):
-        return machine.forward(self.t0)-self.app.u0
+        return machine.forward(self.t0)-self.app.x0
 
 #-----------------------------------------------------------
 def solve_ode(app, layers, n_colloc, return_basis=False):

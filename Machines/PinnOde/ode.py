@@ -41,7 +41,7 @@ class ModelEdo(nnx.Module):
     def __init__(self, app, nbases, key):
         self.app = app
         self.nbases = nbases
-        self.nout = 1 if isinstance(app.u0, float) else len(app.u0)
+        self.nout = 1 if isinstance(app.x0, float) else len(app.x0)
         self.layer = nnx.Linear(nbases, self.nout, use_bias=False, rngs=nnx.Rngs(key))
     def __call__(self, t):
         return self.layer(t).T
@@ -54,7 +54,7 @@ class ModelEdo(nnx.Module):
     def residual_edo(self, machine, t_colloc):
         return jax.vmap(lambda t: self.residual_edo_single(machine, t))(t_colloc)
     def residual_bdry(self, machine, t_colloc):
-        return self.forward(machine, t_colloc[0])-self.app.u0
+        return self.forward(machine, t_colloc[0])-self.app.x0
 
 def train_all(machine, model, t_colloc, lr=0.01, n_epochs=1000):
     graphdef_machine, params_machine, batch_stats_machine = nnx.split(machine, nnx.Param, nnx.BatchStat)
