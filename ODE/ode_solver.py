@@ -43,8 +43,8 @@ class ODE_Legendre():
             self.phi.append(q-q(-1))
             # assert self.phi[-1].deriv() == self.psi[-1]
         self.integration = {'coeff': self.reference_integration(2 * k + 2),
-                            'rhs': self.reference_integration(k + 2),
-                            'est': self.reference_integration(3 * k + 3)}
+                            'rhs': self.reference_integration(2*k + 2),
+                            'est': self.reference_integration(self.error_degree)}
         nbasis = k+1
         assert len(self.phi) == nbasis
 
@@ -88,8 +88,9 @@ class ODE_Legendre():
         j = np.arange(self.k)
         self.GdiagInv = (2 * j + 1.0)/2.0  # shape (nbp,)
 
-    def __init__(self, k=0):
+    def __init__(self, k=0, error_degree=None):
         self.name = self.__class__.__name__ + f"_{k}"
+        self.error_degree = 3*k+3 if error_degree is None else error_degree
         self.construct_basis_and_matrices(k)
     def plot_basis(self):
         import matplotlib.pyplot as plt
@@ -111,7 +112,8 @@ class ODE_Legendre():
         dt = 0.5 * (mesh[1:] - mesh[:-1])
         integ = self.integration['coeff']
         x_vals = np.einsum('tjc,qj->tqc', x, integ.psi)
-        return np.einsum('t,q,tqc->', dt, integ.w, x_vals**2)
+        T = mesh[-1]-mesh[0]
+        return np.einsum('t,q,tqc->', dt, integ.w, x_vals**2)/T
 
     def compute_residual(self, mesh, app, xall):
         nt = mesh.shape[0]
@@ -184,7 +186,7 @@ class ODE_Legendre():
             Aflat = Aloc.swapaxes(1, 2).reshape(nbasis * ncomp, nbasis * ncomp)
             # --- Solve local system
             xsol = np.linalg.solve(Aflat, bloc.ravel()).reshape((nbasis, ncomp))
-            # print(f"{it=}: {bloc.squeeze()=} {Aloc.squeeze()=} {usol.squeeze()=}")
+            # print(f"{it=}: {bloc.squeeze()=} {Aloc.squeeze()=} {xsol.squeeze()=}")
             x_coef[it] = xsol
             bloc.fill(0)
             bloc[0] = self.T[0] * xsol[0] - np.einsum('icd,id->c', a0_vals[it], xsol)
@@ -201,91 +203,67 @@ class ODE_Legendre():
         xnew = (x[0] + du_h[0], x[1] + du_h[1])
         # print(f"xnew = {xnew}")
         res = self.compute_residual(mesh, app, xnew)
-        print(f"res = {np.linalg.norm(res[0])+np.linalg.norm(res[1])}")
+        print(f"res = {np.linalg.norm(res[0])}  {np.linalg.norm(res[1])}")
         return xnew
 
-    def _get_a_linearized(self, it, tm, dt, mesh, app, xall):
-        x, xT = xall
-        nt = mesh.shape[0]
+    def _get_a_semi_implicit(self, tm, dt, mesh, app, xT):
         ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
         integ = self.integration['coeff']
         t_coeff = tm + dt * integ.x[:]
-        x_vals = np.einsum('jc,qj->qc', x[it], integ.psi)
-        A_vals = np.stack([app.df(t, u) for t, u in zip(t_coeff.ravel(), x_vals.reshape(-1, ncomp))])
+        A_vals = np.stack([app.df(t, xT) for t in t_coeff.ravel()])
         A_vals = A_vals.reshape(integ.n, ncomp, ncomp)
         a0_vals = dt *np.einsum('iq,qnm->inm', self.Mold, A_vals)
         a_vals = dt *np.einsum('ijq,qnm->ijnm', self.M, A_vals)
         return a_vals, a0_vals
-    def _compute_residual(self, it, tm, dt, mesh, app, xall):
-        nt = mesh.shape[0]
-        assert mesh.ndim == 1
-        nbasis = len(self.phi)
+    def _compute_rhs_semi_implicit(self, tm, dt, app, xT):
         ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
-        rhs1 = np.zeros(shape=(ncomp), dtype=self.M.dtype)
-        rhs1old = np.zeros(shape=(ncomp), dtype=self.M.dtype)
-        rhs2 = np.zeros(shape=(nbasis - 1, ncomp), dtype=self.M.dtype)
-        # tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
-
         integ = self.integration['rhs']
-        t_rhs = tm + dt * integ.x
         nint = integ.n
-
-        x, xT = xall
-        # x_vals shape (nt-1, int_n, ncomp)
-        x_vals = np.einsum('jc,qj->qc', x[it], integ.psi)
-
-        # --- Evaluate f(t,u) at all quadrature points ---
-        # We collect all values and stack to (nt-1, int_n, ncomp)
+        t_rhs = tm + dt * integ.x
+        f_all = np.zeros(shape=(nint, ncomp), dtype=self.M.dtype)
+        for ii in range(nint):
+            # print(f"{xT.shape=} {app.df(t_rhs[ii], xT).shape=}")
+            f_all[ii] = app.f(t_rhs[ii], xT) - app.df(t_rhs[ii], xT) @ xT
+        return -dt* np.einsum('bi,ic->bc', self.B, f_all)
+    def _compute_xT_semi_implicit(self, tm, dt, app, xold, a0_vals):
+        integ = self.integration['rhs']
+        nint = integ.n
+        t_rhs = tm + dt * integ.x
+        x_vals = np.einsum('jc,qj->qc', xold, integ.psi)
         f_all = np.zeros_like(x_vals)
         for ii in range(nint):
             f_all[ii] = app.f(t_rhs[ii], x_vals[ii])
-
-        # --- Quadrature (vectorized) ---
-        if it==0: rhs1 = -app.x0
-        rhs1 -= dt*np.einsum('i,ic->c', self.B[0], f_all)
-        rhs1old = -dt*np.einsum('i,ic->c',  self.Bold, f_all)
-        rhs2 = -dt*np.einsum('bi,ic->bc', self.B[1:], f_all)
-
-        # --- Derivative contributions ---
-        # print(f"{nt=} {self.T[0]=} {x[:-1, 0].shape=} {rhs1[:-1].shape=}")
-        rhs1 -= self.T[0] * x[it][0]
-        rhs1old += self.T[0] * x[it][0]
-        rhs2 -= np.einsum('b,bq->bq', self.T[1:], x[it,1:])
-        # print(f"rhs1[-1] = {rhs1[-1]} {xT=}")
-        rhs1[-1] += xT
-        return rhs1, rhs2
-    def solve_semi_implicit(self, mesh, app, x):
-        rhs1_all, rhs2_all = self.compute_residual(mesh, app, x)
+        xT = -self.T[0] * xold[0]
+        xT += dt * np.einsum('i,ic->c', self.Bold, f_all)
+        # xT -= np.einsum('icd,id->c', a0_vals, xold)
+        return xT
+    def solve_semi_implicit(self, mesh, app):
         nt = mesh.shape[0]
         assert mesh.ndim == 1
         nbasis = len(self.phi)
         ncomp = 1 if np.ndim(app.x0) == 0 else len(app.x0)
         x_coef = np.empty((nt - 1, nbasis, ncomp), dtype=self.M.dtype)
-        x_T = np.zeros(ncomp, dtype=self.M.dtype)
         bloc = np.zeros((nbasis, ncomp), dtype=self.M.dtype)
         Aloc_template = np.zeros((nbasis, nbasis, ncomp, ncomp), dtype=self.M.dtype)
         for i in range(nbasis):
             Aloc_template[i, i, :, :] = np.eye(ncomp) * self.T[i]
-        # a_vals, a0_vals = self.get_a_linearized(mesh, app, x)
         tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
+        bloc[0] = -app.x0
+        xT = np.atleast_1d(app.x0)
         for it in range(nt - 1):
-            rhs1, rhs2 = self._compute_residual(it, tm[it], dt[it], mesh, app, x)
-            bloc[0,:] += rhs1
-            bloc[1:,:] += rhs2
-            a_vals, a0_vals = self._get_a_linearized(it, tm[it], dt[it], mesh, app, x)
+            rhs = self._compute_rhs_semi_implicit(tm[it], dt[it], app, xT)
+            bloc += rhs
+            # xT -= rhs[0]
+            a_vals, a0_vals = self._get_a_semi_implicit(tm[it], dt[it], mesh, app, xT)
             Aloc = Aloc_template + a_vals
             Aflat = Aloc.swapaxes(1, 2).reshape(nbasis * ncomp, nbasis * ncomp)
-            # --- Solve local system
             xsol = np.linalg.solve(Aflat, bloc.ravel()).reshape((nbasis, ncomp))
-            # print(f"{it=}: {bloc.squeeze()=} {Aloc.squeeze()=} {usol.squeeze()=}")
             x_coef[it] = xsol
-            x_T = np.einsum('icd,id->c', a0_vals, xsol) - self.T[0] * xsol[0]
-            if it < nt - 2:
-                bloc.fill(0)
-                bloc[0] = -x_T
-            else:
-                x_T -= rhs1_all[it + 1]
-        return x_coef, x_T
+            xT = self._compute_xT_semi_implicit(tm[it], dt[it], app, xsol, a0_vals)
+            # print(f"{xT=} {app.solution(tm[it])=} {xsol[0]=}")
+            bloc.fill(0.0)
+            bloc[0] = -xT
+        return x_coef, xT
     def interpolate_midpoint(self, mesh, ucoeff):
         u_h, u_T = ucoeff
         # print(f"{u_h.shape=} {u_T.shape=}")
@@ -417,12 +395,13 @@ if __name__ == "__main__":
             res = cgp.compute_residual(mesh, app, x)
             # print(f"{np.linalg.norm(res[0])=} {np.linalg.norm(res[1])=}")
             p = cgp.solve_linearized(mesh, app, x, res)
-            p2 = cgp.solve_semi_implicit(mesh, app, x)
-            assert np.allclose(p[0], p2[0]), "problem in 0"
-            assert np.allclose(p[1], p2[1]), "problem in 1"
             # print(f"{np.linalg.norm(du_h[0])=}")
             # print(f"{u_h[0].squeeze()=}\n{du_h[0].squeeze()=}")
-            x = (x[0] + p[0], x[1]+p[1])
+            # x = (x[0] + p[0], x[1]+p[1])
+            x = cgp.solve_linear(mesh, app)
+            x2 = cgp.solve_semi_implicit(mesh, app)
+            assert np.allclose(x[0], x2[0]), f"problem in 0\n{x[0].squeeze()=}\n{x2[0].squeeze()=}"
+            assert np.allclose(x[1], x2[1]), f"problem in 1\n{x[1]=}\n{x2[1]=} {app.solution(mesh[-1])}"
             t1 = time.time()
             el2, err = cgp.compute_error(mesh, x, app.solution)
             errs_l2.append(el2)
@@ -456,13 +435,13 @@ if __name__ == "__main__":
         plt.show()
 
 
-    # app = ode_examples.PolynomialIntegration(degree=9, ncomp=2)
+    # app = ode_examples.PolynomialIntegration(degree=9, ncomp=2, seed=17)
     # app = ode_examples.Exponential(lam=1.2)
     # app = ode_examples.ExponentialJordan()
-    app = ode_examples.TimeDependentShear()
-    # app = ode_examples.TimeDependentRotation(t_end = 24)
+    # app = ode_examples.TimeDependentShear()
+    app = ode_examples.TimeDependentRotation(t_end = 24)
     # app.check_linear()
-    check_error(app, k=2, niter=12, n0=3, plot=False, mesh_type='random')
+    check_error(app, k=2, niter=6, n0=3, plot=True, mesh_type='random')
 
     # cgp = ODE_Legendre(k=3)
     # cgp.plot_basis()

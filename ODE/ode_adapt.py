@@ -1,7 +1,6 @@
-import jax
-
-jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
+# import jax
+# jax.config.update("jax_enable_x64", True)
+# import jax.numpy as jnp
 import numpy as np
 from ode_solver import ODE_Legendre
 from Utility import mesh1d, plotting
@@ -24,7 +23,10 @@ def plot_all(**kwargs):
         pd[app.name]['y']['sol'] = u_true
     pd[app.name]['kwargs'] = {'app': {'marker': 'o'}}
     pd["Mesh"]['x'] = mesh
-    pd["Mesh"]['y'] = {'1/h': 1.0 / (mesh[1:] - mesh[:-1])}
+    hinv = 1.0 / (mesh[1:] - mesh[:-1])
+    # print(f"{np.min(hinv)=} {np.max(hinv)=}")
+    hinv /= np.min(hinv)
+    pd["Mesh"]['y'] = {'1/h': hinv}
     pd["Mesh"]['type'] = 'step'
     cand_cell = ['zeta', 'eta', 'err']
     cell_dict={}
@@ -115,12 +117,14 @@ def test_interpolation(niter=6):
         mesh = mesh_new
 
 #==================================================================
-def test_adaptive_linear(app, solver, niter=6, plot=True):
+def test_adaptive_linear(app, solver, niter=6, plot=True, semi_implicit=False):
     mesh = mesh1d.mesh(app.t_begin, app.t_end, n=3)
     ns, errs_l2, errs_disc, etas = [], [], [], []
     for iter in range(niter):
-        x = solver.solve_linear(mesh, app)
-        # el2, edisc, err_cell = solver.compute_error(mesh, x, app.solution)
+        if semi_implicit:
+            x = solver.solve_semi_implicit(mesh, app)
+        else:
+            x = solver.solve_linear(mesh, app)
         p = (np.zeros_like(x[0]), np.zeros_like(x[1]))
         zeta, zeta_cell, eta, eta_cell = solver.estimator(mesh, x, p, app)
         el2, err_cell = solver.compute_error(mesh, x, app.solution)
@@ -130,8 +134,8 @@ def test_adaptive_linear(app, solver, niter=6, plot=True):
         ns.append(mesh.shape[0])
         if plot:
             plot_all(mesh=mesh, app=app, solver=solver,
-                     x=x, zeta=zeta_cell, eta=eta_cell, err=err_cell, title=f"Iteration {iter} N={mesh.shape[0]}")
-        mesh_new, refinfo = mesh1d.adapt_mesh(mesh, eta_cell)
+                     x=x, zeta=np.sqrt(zeta_cell), eta=np.sqrt(eta_cell), err=np.sqrt(err_cell), title=f"Iteration {iter} N={mesh.shape[0]}")
+        mesh_new, refinfo = mesh1d.adapt_mesh(mesh, eta_cell, theta=0.9)
         x_new = solver.interpolate(x, mesh_new, refinfo)
         mesh = mesh_new
     ns = np.array(ns)
@@ -148,19 +152,26 @@ def test_adaptive(app, solver, niter=6, plot=True):
 
 #------------------------------------------------------------------
 if __name__ == "__main__":
-    todo = 'linear'
+    todo = 'semi_implicit'
     np.random.seed(12)
     if todo == 'interpolation':
         test_interpolation()
-    elif todo == 'nonlinear':
-        solver = ODE_Legendre(k=0)
+    elif todo == 'linear':
+        solver = ODE_Legendre(k=2)
         # app = ode_examples.LinearIntegration()
         # app = ode_examples.PolynomialIntegration(degree=8, ncomp=2)
         # app = ode_examples.Exponential(lam=10.2)
-        app = ode_examples.ExponentialJordan(lam=2.2)
-        # app = ode_examples.TimeDependentRotation()
+        # app = ode_examples.ExponentialJordan(lam=2.2)
+        # app = ode_examples.TimeDependentShear()
+        app = ode_examples.TimeDependentRotation()
         # app = ode_examples.RotScaleForce()
-        test_adaptive_linear(app, solver, niter=4)
+        test_adaptive_linear(app, solver, niter=20)
+    elif todo == 'semi_implicit':
+        solver = ODE_Legendre(k=1, error_degree=20)
+        # app = ode_examples.TimeDependentRotation()
+        app = ode_examples.LinearSingular()
+        # app = ode_examples.Logistic(t_end=10)
+        test_adaptive_linear(app, solver, niter=30, semi_implicit=True)
     else:
         from Newton import newton, newtondata
         # app = ode_examples.PolynomialIntegration(degree=8, ncomp=2)

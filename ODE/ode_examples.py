@@ -16,11 +16,6 @@ class OdeExample:
         self.t_begin, self.t_end, self.x0 = t_begin, t_end, x0
         self.name = self.__class__.__name__
         self.ncomp = 1 if isinstance(self.x0, float) else len(self.x0)
-        # if hasattr(self, 'f'):
-        #     self.df = jax.jacrev(self.f)
-        #     self.is_linear = False
-        # else:
-        #     self.is_linear = True
 
     def _create_time_derivative(self, sol_func):
         """
@@ -70,14 +65,12 @@ class OdeExample:
 #=============================================================
 #==================Linear examples============================
 #=============================================================
-#-------------------------------------------------------------
 class LinearIntegration(OdeExample):
     def __init__(self, t_begin=0.0, t_end=1.0):
         super().__init__(x0=1.1, t_begin=t_begin, t_end=t_end)
         self.f = lambda t,u: 2.2
         self.df = lambda t,u: np.array([[0.0]])
     def solution(self, t):
-        t = np.asarray(t)
         t = np.atleast_1d(t)
         return 1.1+2.2*t
 #-------------------------------------------------------------
@@ -91,16 +84,13 @@ class PolynomialIntegration(OdeExample):
         self.coeffs = np.stack([np.array(c) for c in self.coefs])  # shape (ncomp, degree+1)
         x0 = np.array([p(t_begin) for p in self.p_list])
         super().__init__(x0=x0, t_begin=t_begin, t_end=t_end)
-
     def df(self, t, u):
         t = np.atleast_1d(t)
         return np.zeros((t.size, self.ncomp, self.ncomp))
-
     def f(self, t, u):
         # t = np.atleast_1d(t)
         vals = np.array([p(t) for p in self.dp_list])
         return vals
-
     def solution(self, t):
         t = np.asarray(t)
         t = np.atleast_1d(t)
@@ -137,253 +127,63 @@ class ExponentialJordan(OdeExample):
 class TimeDependentShear(OdeExample):
     def __init__(self):
         super().__init__(t_begin=0.0, t_end=4.0, x0=self.solution(0.0).squeeze())
-
     def df(self, t, u):
-        """Return A(t). For scalar t -> shape (2,2). For array t -> (nt,2,2)."""
-        t = np.atleast_1d(t)
-        n = t.shape[0]
-        A = np.zeros((n, 2, 2))
-        A[:, 0, 0] = -1.0
-        A[:, 0, 1] = 1.0 + 0.5 * np.sin(t)
-        A[:, 1, 0] = 0.2 * np.cos(t)
-        A[:, 1, 1] = -2.0
-        return A
-
+        return np.array([[-1.0, np.sin(t)],[np.cos(t),-1.0]])
     def solution(self, t):
-        """Analytic u(t) = e^{-t}[cos t, sin t]; return shape (N,1,2)."""
-        if isinstance(t, sp.Basic):
-            exp = sp.exp
-            cos = sp.cos
-            sin = sp.sin
-        else:
-            exp = np.exp
-            cos = np.cos
-            sin = np.sin
-        # t = np.atleast_1d(t)
-        e = exp(-t)
-        cos_t = cos(t)
-        sin_t = sin(t)
-        u = np.stack([e * cos_t, e * sin_t], axis=-1)  # (N,2)
-        return u
-
+        e, c, s = np.exp(-t), np.cos(t), np.sin(t)
+        return np.stack([e * c, e * s], axis=-1)  # (N,2)
     def f(self, t, u):
-        """
-        Compute b(t) = u'(t) - A(t) u(t) exactly.
-        Returns (2,) for scalar t, or (nt,2) for array t.
-        """
-        t = np.atleast_1d(t)
-        n = t.shape[0]
-
-        e = np.exp(-t)
-        cos_t = np.cos(t)
-        sin_t = np.sin(t)
-
-        # u and u'
-        u1 = e * cos_t
-        u2 = e * sin_t
-        u = np.stack([u1, u2], axis=-1)           # (n,2)
-
-        u1_dot = e * (-cos_t - sin_t)
-        u2_dot = e * (cos_t - sin_t)
-        u_dot = np.stack([u1_dot, u2_dot], axis=-1)  # (n,2)
-
-        # A(t)
-        A = np.zeros((n,2,2))
-        A[:,0,0] = -1.0
-        A[:,0,1] = 1.0 + 0.5*np.sin(t)
-        A[:,1,0] = 0.2*np.cos(t)
-        A[:,1,1] = -2.0
-
-        # compute A(t) @ u(t)
-        Au = np.einsum('tij,tj->ti', A, u)  # (n,2)
-
-        b = u_dot - Au
-        return b
-#-------------------------------------------------------------
+        e, c, s = np.exp(-t), np.cos(t), np.sin(t)
+        return np.array([-e*(s+s**2), e*(c-c**2)])+self.df(t,u)@u
+ #-------------------------------------------------------------
 class TimeDependentRotation(OdeExample):
     def __init__(self, omega=lambda t: 1 + 0.5*np.sin(t),
                  x0=np.array([1.0, 0.0]), t_begin=0.0, t_end=12.0):
         super().__init__(x0, t_begin, t_end)
         self.omega = omega
-
     def df(self, t, u):
-        w = np.atleast_1d(self.omega(t))
-        A = np.zeros((w.size, 2, 2), dtype=float)
-        A[:, 0, 1] = -w
-        A[:, 1, 0] = w
-        return np.squeeze(A)
-
+        w = self.omega(t)
+        return np.array([[0,-w],[w,0]])
     def f(self, t, u):
         A = self.df(t, u)
         return A@u
-        return np.einsum('tij,tj->ti', A, u)
-
     def solution(self, t):
-        theta = t + 0.5- 0.5*np.cos(t)  # numerical approx ok for smooth ω
+        theta = t + 0.5- 0.5*np.cos(t)
         return np.array([np.cos(theta), np.sin(theta)]).T
-
 #-------------------------------------------------------------
-# class RotScaleForce(OdeExample):
-#     def __init__(self, t_end=2.0):
-#         # Example: rotation + scaling
-#         self.alpha = lambda t: 0.1 * t             # scaling rate
-#         self.beta  = lambda t: 1 + 0.5*np.sin(t)  # angular velocity
-#         self.alpha_t = lambda t: t             # scaling rate
-#         self.beta_t  = lambda t: 0.5*np.cos(t)  # angular velocity
-#         super().__init__(x0=self.solution(0.0).squeeze(), t_begin=0.0, t_end=t_end)
-#     def a_coef(self, t):
-#         """Vectorized a_coef over array t"""
-#         t = np.atleast_1d(t)
-#         alpha = self.alpha(t)
-#         beta  = self.beta(t)
-#         n = t.shape[0]
-#         a = np.zeros((n,2,2))
-#         a[:,0,0] = alpha
-#         a[:,0,1] = -beta
-#         a[:,1,0] = beta
-#         a[:,1,1] = alpha
-#         return a  # shape (n,2,2)
-#
-#
-#     def r(self, t):
-#         """Scaling factor"""
-#         if isinstance(t, sp.Basic):
-#             exp = sp.exp
-#             cos = sp.cos
-#             sin = sp.sin
-#         else:
-#             exp = np.exp
-#             cos = np.cos
-#             sin = np.sin
-#         return exp(0.05 * t**2)
-#
-#     def theta(self, t):
-#         """Angle (integral of beta)"""
-#         if isinstance(t, sp.Basic):
-#             exp = sp.exp
-#             cos = sp.cos
-#             sin = sp.sin
-#         else:
-#             exp = np.exp
-#             cos = np.cos
-#             sin = np.sin
-#         return t + 0.5*(1 - cos(t))
-#
-#     def solution(self, t):
-#         if isinstance(t, sp.Basic):
-#             exp = sp.exp
-#             cos = sp.cos
-#             sin = sp.sin
-#         else:
-#             exp = np.exp
-#             cos = np.cos
-#             sin = np.sin
-#
-#         # t = np.atleast_1d(t)  # ensure array
-#         theta = self.theta(t)
-#         scale = self.r(t)  # shape (nt,1)
-#         # u_rot = np.stack([cos(theta), sin(theta)], axis=-1) * scale  # shape (nt,2)
-#         u_rot = np.array([scale * cos(theta), scale * sin(theta)]).T
-#         f = np.stack([sin(t), cos(t)], axis=-1)  # shape (nt,2)
-#         # f = f - f[0]  # shift to satisfy initial condition
-#         u = u_rot + f  # shape (nt,2)
-#         return u  # always 2D
-#
-#     def b_coef(self, t):
-#         """
-#         Compute b(t) = u'(t) - A(t) u(t) exactly for the DG solver.
-#
-#         Works for scalar t or array t, returns:
-#           - shape (2,) for scalar t
-#           - shape (nt,2) for array t
-#         """
-#         t = np.atleast_1d(t)
-#         nt = t.shape[0]
-#
-#         # --- rotation + scaling
-#         theta = t + 0.5 * (1 - np.cos(t))  # integral of beta(t)
-#         theta_dot = 1 + 0.5 * np.sin(t)  # beta(t)
-#         scale = np.exp(0.05 * t ** 2)  # r(t)
-#         scale_dot = 0.1 * t * scale  # r'(t)
-#
-#         cos_th = np.cos(theta)
-#         sin_th = np.sin(theta)
-#
-#         # --- rotation term and derivative
-#         u_rot = np.stack([cos_th, sin_th], axis=-1) * scale[:, None]  # (nt,2)
-#         u_rot_dot = np.zeros_like(u_rot)
-#         u_rot_dot[:, 0] = scale_dot * cos_th - scale * sin_th * theta_dot
-#         u_rot_dot[:, 1] = scale_dot * sin_th + scale * cos_th * theta_dot
-#
-#         # --- forcing term and derivative
-#         f = np.stack([np.sin(t), np.cos(t)], axis=-1) - np.array([0.0, 1.0])
-#         f_dot = np.stack([np.cos(t), -np.sin(t)], axis=-1)
-#
-#         # --- total derivative
-#         u = u_rot + f
-#         u_dot = u_rot_dot + f_dot
-#
-#         # --- A(t) @ u(t)
-#         alpha = 0.1 * t
-#         beta = 1 + 0.5 * np.sin(t)
-#         a = np.zeros((nt, 2, 2))
-#         a[:, 0, 0] = alpha
-#         a[:, 0, 1] = -beta
-#         a[:, 1, 0] = beta
-#         a[:, 1, 1] = alpha
-#
-#         Au = np.einsum('tij,tj->ti', a, u)
-#
-#         # --- b(t)
-#         b = u_dot - Au
-#
-#         # --- return shape consistent with scalar input
-#         return b[0] if nt == 1 else b
-#     def b_coef2(self, t):
-#         t = np.atleast_1d(t)  # shape (nt,) or (1,)
-#         # u_exact returns (nt,2) for array t, or (2,) for scalar t
-#         u = np.atleast_2d(self.u_exact(t))  # (nt,2)
-#
-#         # shape helpers
-#         alpha = self.alpha(t)  # (nt,)
-#         beta = self.beta(t)  # (nt,)
-#         scale = self.r(t)  # (nt,)
-#         scale_dot = (0.1 * t) * scale  # r'(t) = 0.1 t * exp(0.05 t^2)  == alpha*scale
-#         theta = self.theta(t)  # (nt,)
-#         theta_dot = 1 + 0.5 * np.sin(t)  # (nt,)
-#
-#         # rotation vectors
-#         cos_th = np.cos(theta)  # (nt,)
-#         sin_th = np.sin(theta)  # (nt,)
-#
-#         # u_rot = scale * [cos_th, sin_th]
-#         # compute derivative of u_rot:
-#         # u_rot_dot = scale_dot * [cos, sin] + scale * theta_dot * [-sin, cos]
-#         u_rot_dot = np.empty_like(u)  # (nt,2)
-#         u_rot_dot[:, 0] = scale_dot * cos_th - scale * sin_th * theta_dot
-#         u_rot_dot[:, 1] = scale_dot * sin_th + scale * cos_th * theta_dot
-#
-#         # forcing derivative f'(t); original forcing was [sin t, cos t] minus shift
-#         f_dot = np.stack([np.cos(t), -np.sin(t)], axis=-1)  # (nt,2)
-#
-#         # total time derivative of exact solution
-#         u_dot = u_rot_dot + f_dot  # (nt,2)
-#
-#         # a(t) @ u(t) for all t
-#         a = self.a_coef(t)  # should return shape (nt,2,2)
-#         # a @ u  -> (nt,2)
-#         return u_dot - np.einsum('tij,tj->ti', a, u)
-#
-#     # def solution(self, t):
-#     #     return self.u_exact(t)
+class LinearSingular(OdeExample):
+    def __init__(self, x0=np.array([1.0, 0.0]), t_begin=0.0, t_end=1.0):
+        super().__init__(x0, t_begin, t_end)
+        self.ts = (self.t_end-self.t_begin)/2.0
+    def g(self,t): return np.cos(np.log(np.abs(t-self.ts)))
+    def theta(self,t):
+        ts = self.ts
+        x = t - ts
+        ell = np.log(np.abs(x))
+        prim = 0.5 * x * (np.sin(ell) + np.cos(ell))
+        # enforce initial condition θ(0)=0
+        x0 = 0 - ts
+        ell0 = np.log(np.abs(x0))
+        prim0 = 0.5 * x0 * (np.sin(ell0) + np.cos(ell0))
+        return prim - prim0
+    def df(self, t, u):
+        w = self.g(t)
+        return np.array([[0,-w],[w,0]])
+    def f(self, t, u):
+        A = self.df(t, u)
+        return A@u
+    def solution(self, t):
+        th = self.theta(t)
+        return np.array([np.cos(th), np.sin(th)]).T
+
 #=============================================================
 #==================Nonlinear examples============================
 #=============================================================
 #-------------------------------------------------------------
 class Logistic(OdeExample):
-    def __init__(self, k=1.5, G=1, x0=0.5, t_end=
-2):
-        super().__init__(x0=x0, t_end=T)
+    def __init__(self, k=1.5, G=1.0, x0=0.5, t_end=
+4):
+        super().__init__(x0=x0, t_end=t_end)
         self.k, self.G = k, G
     def f(self, t, u):
         return self.k * u * (self.G - u)
