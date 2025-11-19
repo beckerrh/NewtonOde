@@ -1,6 +1,3 @@
-# import jax
-# jax.config.update("jax_enable_x64", True)
-# import jax.numpy as jnp
 import numpy as np
 from ode_solver import ODE_Legendre
 from Utility import mesh1d, plotting
@@ -25,8 +22,10 @@ def plot_all(**kwargs):
     pd["Mesh"]['x'] = mesh
     hinv = 1.0 / (mesh[1:] - mesh[:-1])
     # print(f"{np.min(hinv)=} {np.max(hinv)=}")
+    h0 = np.min(hinv)
     hinv /= np.min(hinv)
-    pd["Mesh"]['y'] = {'1/h': hinv}
+    # pd["Mesh"]['y'] = {r'$\frac{h_0}{h}$': hinv}
+    pd["Mesh"]['y'] = {rf'$\frac{{{1/h0:.2e}}}{{h}}$': hinv}
     pd["Mesh"]['type'] = 'step'
     cand_cell = ['zeta', 'eta', 'err']
     cell_dict={}
@@ -42,19 +41,21 @@ def plot_all(**kwargs):
     # pd["Estimator"]['y'] = {'zeta_cell': zeta_cell, 'eta': eta_cell, 'err': err_cell}
     title = kwargs.get("title", app.name)
     plotting.plot_solutions(pd, title=title)
+    if hasattr(app, "plot"): app.plot(t_mp, u_mp.T)
     plt.show()
 
 
 #==================================================================
 class Newton_Ode():
     def __init__(self, app, k=0, mesh=None, n0=12):
-        self.solver = ODE_Legendre(k)
+        self.solver = ODE_Legendre(k, ncomp=app.ncomp)
         self.app = app
         if not mesh:
             self.mesh = mesh1d.mesh(app.t_begin, app.t_end, n=n0)
         else:
             self.mesh = mesh
     def initial_guess(self):
+        return self.solver.solve_semi_implicit(self.mesh, self.app)
         nt = self.mesh.shape[0]
         nbasis = len(self.solver.phi)
         ncomp = 1 if np.ndim(self.app.x0) == 0 else len(self.app.x0)
@@ -94,6 +95,9 @@ class Newton_Ode():
             print(f"{btresult.step=}")
         else:
             print(f"{kwargs['dxnorm']=} {kwargs['dxnorm_old']=}")
+    def plot(self, xs):
+        x, xT = xs
+        print(f"{x.shape=} {self.mesh.shape=}")
 
 
 
@@ -117,34 +121,82 @@ def test_interpolation(niter=6):
         mesh = mesh_new
 
 #==================================================================
-def test_adaptive_linear(app, solver, niter=6, plot=True, semi_implicit=False):
-    mesh = mesh1d.mesh(app.t_begin, app.t_end, n=3)
-    ns, errs_l2, errs_disc, etas = [], [], [], []
+def adaptive_linear(app, solver, **kwargs):
+    eta_rtol = kwargs.get("eta_rtol", None)
+    niter = kwargs.get("niter", 30)
+    plot = kwargs.get("plot", False)
+    n0 = kwargs.get("n0", 11)
+    semi_implicit = kwargs.get("semi_implicit", True)
+    theta = kwargs.get("theta", 0.9)
+    mesh = mesh1d.mesh(app.t_begin, app.t_end, n=n0)
+    ns, errs_l2, etas = [], [], []
+    has_solution = hasattr(app, 'solution')
     for iter in range(niter):
         if semi_implicit:
             x = solver.solve_semi_implicit(mesh, app)
         else:
             x = solver.solve_linear(mesh, app)
-        p = (np.zeros_like(x[0]), np.zeros_like(x[1]))
-        zeta, zeta_cell, eta, eta_cell = solver.estimator(mesh, x, p, app)
-        el2, err_cell = solver.compute_error(mesh, x, app.solution)
-        errs_l2.append(el2)
-        etas.append(eta)
-        # print(f"{el2/eta=}")
+        est = solver.estimator(mesh, x, app)
         ns.append(mesh.shape[0])
+        etas.append(est.eta_global)
+        if has_solution:
+            el2, err_cell = solver.compute_error(mesh, x, app.solution)
+            errs_l2.append(el2)
+            msg = f"{ns[-1]:7d} {errs_l2[-1]/etas[-1]:8.2f} {etas[-1]:12.2e}"
+        else:
+            msg = f"{ns[-1]:7d} {etas[-1]:12.2e}"
         if plot:
-            plot_all(mesh=mesh, app=app, solver=solver,
-                     x=x, zeta=np.sqrt(zeta_cell), eta=np.sqrt(eta_cell), err=np.sqrt(err_cell), title=f"Iteration {iter} N={mesh.shape[0]}")
-        mesh_new, refinfo = mesh1d.adapt_mesh(mesh, eta_cell, theta=0.9)
+            kwargs = {'mesh':mesh, 'app':app, 'solver':solver, 'x':x, 'eta':np.sqrt(est.eta_cell), 'title':f"Iteration {iter} N={mesh.shape[0]}"}
+            if has_solution: kwargs['err'] = np.sqrt(err_cell)
+            plot_all(**kwargs)
+        if eta_rtol is not None:
+            if iter==0: eta_first = est.eta_global
+            msg += f"{est.eta_global:12.2e} {eta_first*eta_rtol:12.2e}"
+            if est.eta_global <= eta_rtol*eta_first:
+                print(msg)
+                result = SimpleNamespace(ns=np.array(ns), etas=np.array(etas), err_l2=np.array(errs_l2))
+                return result
+        print(msg)
+        mesh_new, refinfo = mesh1d.adapt_mesh(mesh, est.eta_cell, theta=theta)
         x_new = solver.interpolate(x, mesh_new, refinfo)
         mesh = mesh_new
-    ns = np.array(ns)
-    errs_l2 = np.array(errs_l2)
-    etas = np.array(etas)
-    pdict = {'x': ns, 'y': {'L2': errs_l2, 'eta': etas}}
+    result = SimpleNamespace(ns=np.array(ns), etas=np.array(etas))
+    if has_solution: result.err_l2 = np.array(errs_l2)
+    return result
+def test_adaptive_linear(app, solver, **kwargs):
+    res = adaptive_linear(app, solver, **kwargs)
+    pdict = {'x': res.ns, 'y': {'eta': res.etas}}
+    if hasattr(res, 'err_l2'): pdict['y']['err'] = res.err_l2
     plot_dict = {"Errors":  pdict}
     plotting.plot_error_curves(plot_dict)
     plt.show()
+def compare_adaptive_linear(app, solver, **kwargs):
+    thetas = [0.7, 0.9, 1.0]
+    ns_all, errs_l2_all, etas_all = [], [], []
+    for theta in thetas:
+        kwargs["theta"] = theta
+        ns, errs_l2, etas = adaptive_linear(app, solver, **kwargs)
+        ns_all.append(ns)
+        errs_l2_all.append(errs_l2)
+        etas_all.append(etas)
+    plot_dict = {}
+    for theta, ns, errs_l2, etas in zip(thetas, ns_all, errs_l2_all, etas_all):
+        plot_dict[rf"$\theta={theta}$"] = {'x': ns, 'y': {'L2': errs_l2, 'eta': etas}}
+    plotting.plot_error_curves(plot_dict)
+    plt.show()
+    plot_dict = {"Etas":{}, "Errors":{}}
+    ys_eta, ys_err = {}, {}
+    for theta, errs_l2, etas in zip(thetas, errs_l2_all, etas_all):
+        ys_eta[rf"$\theta={theta}$"] = etas
+        ys_err[rf"$\theta={theta}$"] = errs_l2
+    plot_dict["Etas"]['x'] = ns_all
+    plot_dict["Etas"]['y'] = ys_eta
+    plot_dict["Errors"]['x'] = ns_all
+    plot_dict["Errors"]['y'] = ys_err
+    plotting.plot_error_curves(plot_dict)
+    plt.show()
+
+
 
 #==================================================================
 def test_adaptive(app, solver, niter=6, plot=True):
@@ -153,40 +205,50 @@ def test_adaptive(app, solver, niter=6, plot=True):
 #------------------------------------------------------------------
 if __name__ == "__main__":
     todo = 'semi_implicit'
+    todo = 'nonlinear'
     np.random.seed(12)
     if todo == 'interpolation':
         test_interpolation()
     elif todo == 'linear':
-        solver = ODE_Legendre(k=2)
         # app = ode_examples.LinearIntegration()
         # app = ode_examples.PolynomialIntegration(degree=8, ncomp=2)
         # app = ode_examples.Exponential(lam=10.2)
         # app = ode_examples.ExponentialJordan(lam=2.2)
         # app = ode_examples.TimeDependentShear()
         app = ode_examples.TimeDependentRotation()
+        solver = ODE_Legendre(k=2, ncomp=app.ncomp)
         # app = ode_examples.RotScaleForce()
-        test_adaptive_linear(app, solver, niter=20)
+        test_adaptive_linear(app, solver, semi_implicit=False, eta_rtol=1e-6)
     elif todo == 'semi_implicit':
-        solver = ODE_Legendre(k=1, error_degree=20)
         # app = ode_examples.TimeDependentRotation()
-        app = ode_examples.LinearSingular()
+        # app = ode_examples.LinearSingular()
+        # app = ode_examples.ArctanJump(eps=0.05)
         # app = ode_examples.Logistic(t_end=10)
-        test_adaptive_linear(app, solver, niter=30, semi_implicit=True)
+        app = ode_examples.Lorenz(t_end=15, x0=[1.0, 1.0, 1.0])
+        # app = ode_examples.LinearPBInstability(t_end=10.0)
+        solver = ODE_Legendre(k=0, ncomp=app.ncomp, est_degree=20, error_degree=20)
+        test_adaptive_linear(app, solver, semi_implicit=True, eta_rtol=1e-6, plot=True, n0=100, niter=30)
+        # compare_adaptive_linear(app, solver, semi_implicit=True, eta_rtol=1e-6, niter=100, n0=20)
     else:
         from Newton import newton, newtondata
         # app = ode_examples.PolynomialIntegration(degree=8, ncomp=2)
         # app = ode_examples.Exponential(lam=0.2)
         # app = ode_examples.ExponentialJordan(lam=2.2)
         # app = ode_examples.Logistic()
-        # app = ode_examples.Pendulum(t_end=2)
+        # app = ode_examples.Pendulum(t_end=13)
+        app = ode_examples.DoublePendulum(t_end=15)
         # app = ode_examples.VanDerPol(t_end=8)
-        app = ode_examples.Robertson()
+        # app = ode_examples.Robertson()
         # app = ode_examples.Lorenz()
         # app = ode_examples.Mathieu()
         # app = ode_examples.NonlinearMix()
         # app = ode_examples.Mathieu()
         sdata = newtondata.StoppingParamaters(bt_maxiter=50, bt_c=0.01)
-        solver = Newton_Ode(app, k=1, n0=20)
+        solver = Newton_Ode(app, k=0, n0=120)
         x0 = solver.initial_guess()
         newton = newton.Newton(nd = solver, verbose=2, sdata=sdata)
-        newton.solve(x0)
+        xs, info = newton.solve(x0)
+        if not info.success:
+            print(f"@@@@@@@@@@@@@@@@ {info.failure}")
+        solver.plot(xs)
+

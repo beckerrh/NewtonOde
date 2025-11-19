@@ -151,33 +151,116 @@ class TimeDependentRotation(OdeExample):
         theta = t + 0.5- 0.5*np.cos(t)
         return np.array([np.cos(theta), np.sin(theta)]).T
 #-------------------------------------------------------------
-class LinearSingular(OdeExample):
-    def __init__(self, x0=np.array([1.0, 0.0]), t_begin=0.0, t_end=1.0):
+#-------------------------------------------------------------
+class LogOscillatory(OdeExample):
+    def __init__(self, x0=np.array([1.0,0.0]), t_begin=0.0, t_end=1.0):
         super().__init__(x0, t_begin, t_end)
-        self.ts = (self.t_end-self.t_begin)/2.0
-    def g(self,t): return np.cos(np.log(np.abs(t-self.ts)))
-    def theta(self,t):
-        ts = self.ts
-        x = t - ts
-        ell = np.log(np.abs(x))
-        prim = 0.5 * x * (np.sin(ell) + np.cos(ell))
-        # enforce initial condition θ(0)=0
-        x0 = 0 - ts
-        ell0 = np.log(np.abs(x0))
-        prim0 = 0.5 * x0 * (np.sin(ell0) + np.cos(ell0))
-        return prim - prim0
+        self.t0 = 0.5*(t_begin + t_end)
+
+    def omega(self, t):
+        return np.cos(np.log(np.abs(t - self.t0)))
+
+    def theta(self, t):
+        x  = t - self.t0
+        x0 = 0 - self.t0
+        def prim(z):
+            return 0.5*z*(np.sin(np.log(np.abs(z))) +
+                           np.cos(np.log(np.abs(z))))
+        return prim(x) - prim(x0)
+
     def df(self, t, u):
-        w = self.g(t)
-        return np.array([[0,-w],[w,0]])
+        w = self.omega(t)
+        return np.array([[0, -w], [w, 0]])
+
     def f(self, t, u):
-        A = self.df(t, u)
-        return A@u
+        return self.df(t,u) @ u
+
+    def solution(self, t):
+        th = self.theta(t)
+        return np.column_stack([np.cos(th), np.sin(th)])
+
+#-------------------------------------------------------------
+class ArctanJump(OdeExample):
+    def __init__(self, t_begin=0.0, t_end=1.0,
+                 alpha=10.0, eps=1e-2):
+        self.t0 = 0.5*(t_begin + t_end)
+        self.alpha = alpha
+        self.eps = eps
+        super().__init__(self.solution(t_begin), t_begin, t_end)
+
+    def theta(self, t):
+        return t + self.alpha * np.arctan((t - self.t0)/self.eps)
+
+    def omega(self, t):
+        return 1 + self.alpha*self.eps / ((t - self.t0)**2 + self.eps**2)
+
+    def df(self, t, u):
+        w = self.omega(t)
+        return np.array([[0, -w], [w, 0]])
+
+    def f(self, t, u):
+        return self.df(t,u) @ u
+
     def solution(self, t):
         th = self.theta(t)
         return np.array([np.cos(th), np.sin(th)]).T
+        return np.column_stack([np.cos(th), np.sin(th)])#==================Nonlinear examples============================
 
-#=============================================================
-#==================Nonlinear examples============================
+
+# -------------------------------------------------------------
+class LogFrequency(OdeExample):
+    def __init__(self, x0=np.array([1.0, 0.0]),
+                 t_begin=1e-6, t_end=1.0, alpha=10.0):
+        super().__init__(x0, t_begin, t_end)
+        self.alpha = alpha
+
+    def omega(self, t):
+        return np.cos(self.alpha * np.log(t))
+
+    def theta(self, t):
+        a = self.alpha
+        C = 1.0 / (1 + a * a)
+
+        def prim(x):
+            return C * x * (np.cos(a * np.log(x)) + a * np.sin(a * np.log(x)))
+
+        return prim(t) - prim(1.0)  # normalize so theta(1)=0
+
+    def df(self, t, u):
+        w = self.omega(t)
+        return np.array([[0, -w], [w, 0]])
+
+    def f(self, t, u):
+        return self.df(t, u) @ u
+
+    def solution(self, t):
+        th = self.theta(t)
+        return np.column_stack([np.cos(th), np.sin(th)])
+
+# -------------------------------------------------------------
+class LinearPBInstability(OdeExample):
+
+    def __init__(self, x0=np.array([1.0, 0.0]), t_begin=0.0, t_end=5.0):
+        super().__init__(x0, t_begin, t_end)
+
+    def omega(self, t):
+        return t * np.cos(t**2)
+
+    def df(self, t, u):
+        w = self.omega(t)
+        return np.array([[0.0, -w],
+                         [w,   0.0]])
+
+    def f(self, t, u):
+        return self.df(t, u) @ u
+
+    def theta(self, t):
+        # Exact primitive: integral of s*cos(s^2) = 0.5*sin(s^2)
+        return 0.5 * np.sin(t**2)
+
+    def solution(self, t):
+        th = self.theta(t)
+        return np.array([np.cos(th), np.sin(th)]).T
 #=============================================================
 #-------------------------------------------------------------
 class Logistic(OdeExample):
@@ -214,10 +297,190 @@ class Pendulum(OdeExample):
         alpha, goL = self.alpha, self.goL
         return np.array([[0, 1], [-goL* np.cos(u[0]), -alpha]])
 
+    def plot(self, t, u):
+        import matplotlib.pyplot as plt
+
+        theta, omega = u[0], u[1]
+        L = 1.0  # geometric length for plotting
+        x = L * np.sin(theta)
+        y = -L * np.cos(theta)
+        plt.figure()
+        plt.plot(x, y, lw=0.7)
+        plt.scatter([x[0], x[-1]], [y[0], y[-1]],
+                       c=["green", "red"], s=50,
+                       label="start / end")
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
 #-------------------------------------------------------------
-class LorenzOld(OdeExample):
-    def __init__(self, sigma=10, rho=28, beta=8/3, t_end=20):
-        super().__init__(x0=np.array([-10, -4.45, 35.1]), t_end=t_end)
+class DoublePendulum(OdeExample):
+    def __init__(self, m1=1.0, m2=1.0, l1=1.0, l2=2.0,
+                 g=9.81, t_end=5.0, x0=[np.pi/2, 0.0, np.pi/2+0.1, 0.0]):
+        """
+        State vector u = [theta1, omega1, theta2, omega2].
+        Angles measured from vertical downward.
+        """
+        super().__init__(x0=np.array(x0), t_end=t_end)
+        self.m1, self.m2 = m1, m2
+        self.l1, self.l2 = l1, l2
+        self.g  = g
+        # Shorthand for equations
+    def f(self, t,u):
+        th1, w1, th2, w2 = u
+        m1, m2, l1, l2, g = self.m1, self.m2, self.l1, self.l2, self.g
+        delta = th1 - th2
+        denom = 2*m1 + m2 - m2 * np.cos(2*delta)
+        ddth1 = (
+            -g*(2*m1 + m2) * np.sin(th1)
+            - m2*g*np.sin(th1 - 2*th2)
+            - 2*np.sin(delta)*m2 * (w2**2 * l2 + w1**2 * l1 * np.cos(delta))
+        ) / (l1 * denom)
+        ddth2 = (
+            2*np.sin(delta) * (
+                w1**2 * l1 * (m1 + m2)
+                + g*(m1 + m2)*np.cos(th1)
+                + w2**2 * l2 * m2 * np.cos(delta)
+            )
+        ) / (l2 * denom)
+        return np.array([w1, ddth1, w2, ddth2])
+
+    def df(self, t, u):
+        m1, m2, l1, l2, g = self.m1, self.m2, self.l1, self.l2, self.g
+        th1, w1, th2, w2 = u
+        delta = th1 - th2
+
+        s1 = np.sin(th1)
+        c1 = np.cos(th1)
+        sd = np.sin(delta)
+        cd = np.cos(delta)
+        # s1m2 = np.sin(th1 - 2 * th2)
+        c1m2 = np.cos(th1 - 2 * th2)
+        # s2d = np.sin(2 * delta)
+
+        D = (2 * m1 + m2 - m2 * np.cos(2 * delta))  # denom
+        # To avoid accidental division by zero in degenerate configurations:
+        if abs(D) < 1e-14:
+            D = np.sign(D) * 1e-14 if D != 0 else 1e-14
+
+        # Reconstruct numerators N1 and N2 (same as in the rhs)
+        N1 = (-g * (2 * m1 + m2) * np.sin(th1)
+              - m2 * g * np.sin(th1 - 2 * th2)
+              - 2 * sd * m2 * (w2 ** 2 * l2 + w1 ** 2 * l1 * cd))
+
+        N2 = (2 * sd *
+              (w1 ** 2 * l1 * (m1 + m2)
+               + g * (m1 + m2) * c1
+               + w2 ** 2 * l2 * m2 * cd))
+
+        # Partial derivatives wrt omega1, omega2 (only through N1,N2)
+        # dN1/dw1, dN1/dw2
+        dN1_dw1 = -4 * m2 * l1 * cd * sd * w1  # derivative of -2*sd*m2*(w1^2*l1*cd + ...)
+        dN1_dw2 = -4 * m2 * l2 * sd * w2
+
+        # dN2/dw1, dN2/dw2
+        dN2_dw1 = 4 * (m1 + m2) * l1 * sd * w1
+        dN2_dw2 = 4 * m2 * l2 * sd * cd * w2
+
+        # Derivatives of D wrt theta1, theta2
+        dD_dth1 = 2 * m2 * np.sin(2 * delta)  # = 2 m2 sin(2Δ)
+        dD_dth2 = -2 * m2 * np.sin(2 * delta)  # = -2 m2 sin(2Δ)
+
+        # Partial derivatives of N1 wrt theta1, theta2
+        # computed from manual differentiation (see thread for derivation)
+        # dN1/dth1:
+        #   = -g(2m1+m2) cos(th1) - m2 g cos(th1-2th2)
+        #     - 2 m2 [ w2^2 l2 cosΔ + w1^2 l1 cos(2Δ) ]
+        dN1_dth1 = (-g * (2 * m1 + m2) * c1
+                    - m2 * g * c1m2
+                    - 2 * m2 * (w2 ** 2 * l2 * cd + w1 ** 2 * l1 * np.cos(2 * delta)))
+
+        # dN1/dth2:
+        #   =  2 m2 g cos(th1-2th2) + 2 m2 [ w2^2 l2 cosΔ + w1^2 l1 cos(2Δ) ]
+        dN1_dth2 = (2 * m2 * g * c1m2
+                    + 2 * m2 * (w2 ** 2 * l2 * cd + w1 ** 2 * l1 * np.cos(2 * delta)))
+
+        # Partial derivatives of N2 wrt theta1, theta2
+        # Using N2 = 2 sinΔ * A, A = w1^2 l1 (m1+m2) + g (m1+m2) cos(th1) + w2^2 l2 m2 cosΔ
+        A = (w1 ** 2 * l1 * (m1 + m2)
+             + g * (m1 + m2) * c1
+             + w2 ** 2 * l2 * m2 * cd)
+
+        # dN2/dth1 = 2[ cosΔ * A + sinΔ * ( - g (m1+m2) sin(th1) - w2^2 l2 m2 sinΔ ) ]
+        dN2_dth1 = (2 * (cd * A
+                         - sd * (g * (m1 + m2) * s1 + w2 ** 2 * l2 * m2 * sd)))
+
+        # dN2/dth2 = 2[ -cosΔ * A + sinΔ * ( w2^2 l2 m2 sinΔ ) ]
+        dN2_dth2 = (2 * (-cd * A + sd * (w2 ** 2 * l2 * m2 * sd)))
+
+        # Now construct Jacobian J (4x4)
+        J = np.zeros((4, 4))
+
+        # f1 = omega1
+        J[0, :] = [0.0, 1.0, 0.0, 0.0]
+        # f3 = omega2
+        J[2, :] = [0.0, 0.0, 0.0, 1.0]
+
+        # f2 = ddth1 = N1 / (l1 * D)
+        # Partial wrt w1, w2
+        J[1, 1] = dN1_dw1 / (l1 * D)
+        J[1, 3] = dN1_dw2 / (l1 * D)
+        # Partial wrt th1
+        J[1, 0] = (dN1_dth1 * D - N1 * dD_dth1) / (l1 * D * D)
+        # Partial wrt th2
+        J[1, 2] = (dN1_dth2 * D - N1 * dD_dth2) / (l1 * D * D)
+
+        # f4 = ddth2 = N2 / (l2 * D)
+        # Partial wrt w1, w2
+        J[3, 1] = dN2_dw1 / (l2 * D)
+        J[3, 3] = dN2_dw2 / (l2 * D)
+        # Partial wrt th1
+        J[3, 0] = (dN2_dth1 * D - N2 * dD_dth1) / (l2 * D * D)
+        # Partial wrt th2
+        J[3, 2] = (dN2_dth2 * D - N2 * dD_dth2) / (l2 * D * D)
+
+        return J
+    def plot(self, t, u):
+        import matplotlib.pyplot as plt
+        # u has shape (4, len(t)); unpack directly
+        th1, w1, th2, w2 = u
+        # Cartesian coordinates for animation / phase inspection
+        x1 = self.l1 * np.sin(th1)
+        y1 = -self.l1 * np.cos(th1)
+        x2 = x1 + self.l2 * np.sin(th2)
+        y2 = y1 - self.l2 * np.cos(th2)
+        plt.figure()
+        plt.plot(x1, y1, lw=0.7, label="mass 1 path")
+        plt.plot(x2, y2, lw=0.7, label="mass 2 path")
+        plt.scatter([x1[0], x2[0]],[y1[0], y2[0]], c='g', label="start")
+        plt.scatter([x1[-1],x2[-1]],[y1[-1],y2[-1]], c='r', label="end")
+        plt.axis('equal')
+        plt.legend()
+        plt.title("Double Pendulum Trajectories")
+        plt.show()
+#-------------------------------------------------------------
+class LorenzNew(OdeExample):
+    """Lorenz chaotic system"""
+    def __init__(self, sigma=10.0, rho=28.0, beta=8/3, x0=[1.0, 1.0, 1.0], t_end=
+40.0):
+        super().__init__(x0=np.array(x0), t_end=t_end)
+        self.sigma, self.rho, self.beta = sigma, rho, beta
+    def f(self, t, u):
+        x, y, z = u
+        return np.array([self.sigma*(y-x), x*(self.rho - z)-y, x*y - self.beta*z])
+    def df(self, t, u):
+        x, y, z = u
+        return np.array([
+            [-self.sigma, self.sigma, 0.0],
+            [self.rho - z, -1.0, -x],
+            [y, x, -self.beta]
+        ])
+    # no analytic solution
+#-------------------------------------------------------------
+class Lorenz(OdeExample):
+    def __init__(self, sigma=10.0, rho=28.0, beta=8/3, t_end=20.0, x0=[-10, -4.45, 35.1]):
+        super().__init__(x0=np.array(x0), t_end=t_end)
         self.FP1 =  [np.sqrt(beta*(rho-1)), np.sqrt(beta*(rho-1)),rho-1]
         self.FP2 =  [-np.sqrt(beta*(rho-1)), -np.sqrt(beta*(rho-1)),rho-1]
         self.sigma, self.rho, self.beta = sigma, rho, beta
@@ -270,24 +533,6 @@ class Robertson(OdeExample):
             [ self.k1, -2*self.k2*y2 - self.k3*y3, -self.k3*y2],
             [ 0.0,             2*self.k2*y2,       0.0]
         ])    # no analytic solution
-#-------------------------------------------------------------
-class Lorenz(OdeExample):
-    """Lorenz chaotic system"""
-    def __init__(self, sigma=10.0, rho=28.0, beta=8/3, x0=[1.0, 1.0, 1.0], t_end=
-40.0):
-        super().__init__(x0=np.array(x0), t_end=t_end)
-        self.sigma, self.rho, self.beta = sigma, rho, beta
-    def f(self, t, u):
-        x, y, z = u
-        return np.array([self.sigma*(y-x), x*(self.rho - z)-y, x*y - self.beta*z])
-    def df(self, t, u):
-        x, y, z = u
-        return np.array([
-            [-self.sigma, self.sigma, 0.0],
-            [self.rho - z, -1.0, -x],
-            [y, x, -self.beta]
-        ])
-    # no analytic solution
 #-------------------------------------------------------------
 class Mathieu(OdeExample):
     """Mathieu equation: u'' + (a + b cos t) u = 0"""
