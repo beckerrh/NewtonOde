@@ -21,10 +21,8 @@ def plot_all(**kwargs):
     pd[app.name]['kwargs'] = {'app': {'marker': 'o'}}
     pd["Mesh"]['x'] = mesh
     hinv = 1.0 / (mesh[1:] - mesh[:-1])
-    # print(f"{np.min(hinv)=} {np.max(hinv)=}")
     h0 = np.min(hinv)
-    hinv /= np.min(hinv)
-    # pd["Mesh"]['y'] = {r'$\frac{h_0}{h}$': hinv}
+    hinv /= h0
     pd["Mesh"]['y'] = {rf'$\frac{{{1/h0:.2e}}}{{h}}$': hinv}
     pd["Mesh"]['type'] = 'step'
     cand_cell = ['zeta', 'eta', 'err']
@@ -67,16 +65,34 @@ class Newton_Ode():
     def add_update(self, x, step, p):
         xnew = (x[0]+step*p[0], x[1]+step*p[1])
         return xnew
+    # def update_rule(self, x, dx):
+    #     xnew = self.add_update(x, 0.9, dx)
+    #     return xnew, 0.9
     def computeResidual(self, x):
         res = self.solver.compute_residual(self.mesh, self.app, x)
+        result = self.solver.estimator(self.mesh, x, self.app)
+        resnorm = result.eta_global
         # print(f"computeResidual {x=}\n{res=}")
-        resnorm = np.linalg.norm(res[0])+np.linalg.norm(res[1])
+        # resnorm = np.linalg.norm(res[0])+np.linalg.norm(res[1])
         return SimpleNamespace(residual=res,
                                meritvalue=resnorm,
                                residual_norm=resnorm,
                                x_norm=self.solver.x_norm(self.mesh, x))
     def computeUpdate(self, r, x, info):
-        p = self.solver.solve_linearized(self.mesh, self.app, x, r)
+        print(f"{info.resnorm=}")
+        n_mesh_iter=100
+        for iter_mesh in range(n_mesh_iter):
+            p = self.solver.solve_linearized(self.mesh, self.app, x, r)
+            result = self.solver.estimator(self.mesh, x, self.app, p)
+            print(f"\t {iter_mesh} \t {result.eta_global} \t {result.zeta_global}\t {len(self.mesh)}")
+            if result.zeta_global < info.resnorm[-1] or iter_mesh == n_mesh_iter - 1:
+                return SimpleNamespace(update=p, update_norm=self.solver.x_norm(self.mesh, p),
+                                    meritgrad=-np.sum(r[0]**2), x=x)
+            mesh_new, refinfo = mesh1d.adapt_mesh(self.mesh, result.zeta_cell, theta=0.8)
+            x = self.solver.interpolate(x, mesh_new, refinfo)
+            self.mesh = mesh_new
+            r = self.solver.compute_residual(self.mesh, self.app, x)
+        assert None
         # print(f"computeUpdate {x=}\n{p=}")
         return SimpleNamespace(update=p,
                                update_norm=self.solver.x_norm(self.mesh, p),
@@ -87,7 +103,7 @@ class Newton_Ode():
         plot_all(mesh=self.mesh, app=self.app, x=x, solver=self.solver,
                  title=f"{self.app.name} Iter {iterdata.iter}")
 
-    def call_back_baxktrack_failed(self, **kwargs):
+    def call_back_backtrack_failed(self, **kwargs):
         btresult = kwargs['btresult']
         dx = kwargs['dx']
         r = kwargs['r']
@@ -236,15 +252,15 @@ if __name__ == "__main__":
         # app = ode_examples.ExponentialJordan(lam=2.2)
         # app = ode_examples.Logistic()
         # app = ode_examples.Pendulum(t_end=13)
-        app = ode_examples.DoublePendulum(t_end=15)
-        # app = ode_examples.VanDerPol(t_end=8)
+        # app = ode_examples.DoublePendulum(t_end=20)
+        app = ode_examples.VanDerPol(t_end=40.0)
         # app = ode_examples.Robertson()
         # app = ode_examples.Lorenz()
         # app = ode_examples.Mathieu()
         # app = ode_examples.NonlinearMix()
         # app = ode_examples.Mathieu()
         sdata = newtondata.StoppingParamaters(bt_maxiter=50, bt_c=0.01)
-        solver = Newton_Ode(app, k=0, n0=120)
+        solver = Newton_Ode(app, k=0, n0=600)
         x0 = solver.initial_guess()
         newton = newton.Newton(nd = solver, verbose=2, sdata=sdata)
         xs, info = newton.solve(x0)

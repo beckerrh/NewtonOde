@@ -299,7 +299,6 @@ class Pendulum(OdeExample):
 
     def plot(self, t, u):
         import matplotlib.pyplot as plt
-
         theta, omega = u[0], u[1]
         L = 1.0  # geometric length for plotting
         x = L * np.sin(theta)
@@ -307,8 +306,7 @@ class Pendulum(OdeExample):
         plt.figure()
         plt.plot(x, y, lw=0.7)
         plt.scatter([x[0], x[-1]], [y[0], y[-1]],
-                       c=["green", "red"], s=50,
-                       label="start / end")
+                       c=["green", "red"], s=50, label="start / end")
         plt.xlabel("x")
         plt.ylabel("y")
         plt.legend()
@@ -316,7 +314,7 @@ class Pendulum(OdeExample):
         plt.show()
 #-------------------------------------------------------------
 class DoublePendulum(OdeExample):
-    def __init__(self, m1=1.0, m2=1.0, l1=1.0, l2=2.0,
+    def __init__(self, m1=1.3, m2=1.0, l1=1.0, l2=1.3,
                  g=9.81, t_end=5.0, x0=[np.pi/2, 0.0, np.pi/2+0.1, 0.0]):
         """
         State vector u = [theta1, omega1, theta2, omega2].
@@ -450,33 +448,41 @@ class DoublePendulum(OdeExample):
         y1 = -self.l1 * np.cos(th1)
         x2 = x1 + self.l2 * np.sin(th2)
         y2 = y1 - self.l2 * np.cos(th2)
-        plt.figure()
-        plt.plot(x1, y1, lw=0.7, label="mass 1 path")
-        plt.plot(x2, y2, lw=0.7, label="mass 2 path")
-        plt.scatter([x1[0], x2[0]],[y1[0], y2[0]], c='g', label="start")
-        plt.scatter([x1[-1],x2[-1]],[y1[-1],y2[-1]], c='r', label="end")
-        plt.axis('equal')
-        plt.legend()
-        plt.title("Double Pendulum Trajectories")
+        fig, axs = plt.subplots(1, 3, figsize=(16, 4))
+
+        # -----------------------------------------------------------
+        # (1) Physical trajectory
+        axs[0].plot(x1, y1, lw=0.7, label="mass 1 path")
+        axs[0].plot(x2, y2, lw=0.7, label="mass 2 path")
+        axs[0].scatter([x1[0], x2[0]], [y1[0], y2[0]], c='g', label="start")
+        axs[0].scatter([x1[-1], x2[-1]], [y1[-1], y2[-1]], c='r', label="end")
+        axs[0].set_aspect('equal', adjustable='box')
+        axs[0].set_title("Trajectory")
+        axs[0].legend()
+        axs[0].grid(True)
+
+        # -----------------------------------------------------------
+        # (2) Phase portrait for the first pendulum
+        axs[1].plot(th1, w1, lw=0.7)
+        axs[1].scatter(th1[0], w1[0], c='g')
+        axs[1].scatter(th1[-1], w1[-1], c='r')
+        axs[1].set_title(r"Phase Portrait $(\theta_1,\omega_1)$")
+        axs[1].set_xlabel(r"$\theta_1$")
+        axs[1].set_ylabel(r"$\omega_1$")
+        axs[1].grid(True)
+
+        # -----------------------------------------------------------
+        # (3) Phase portrait for the second pendulum
+        axs[2].plot(th2, w2, lw=0.7)
+        axs[2].scatter(th2[0], w2[0], c='g')
+        axs[2].scatter(th2[-1], w2[-1], c='r')
+        axs[2].set_title(r"Phase Portrait $(\theta_2,\omega_2)$")
+        axs[2].set_xlabel(r"$\theta_2$")
+        axs[2].set_ylabel(r"$\omega_2$")
+        axs[2].grid(True)
+
+        plt.tight_layout()
         plt.show()
-#-------------------------------------------------------------
-class LorenzNew(OdeExample):
-    """Lorenz chaotic system"""
-    def __init__(self, sigma=10.0, rho=28.0, beta=8/3, x0=[1.0, 1.0, 1.0], t_end=
-40.0):
-        super().__init__(x0=np.array(x0), t_end=t_end)
-        self.sigma, self.rho, self.beta = sigma, rho, beta
-    def f(self, t, u):
-        x, y, z = u
-        return np.array([self.sigma*(y-x), x*(self.rho - z)-y, x*y - self.beta*z])
-    def df(self, t, u):
-        x, y, z = u
-        return np.array([
-            [-self.sigma, self.sigma, 0.0],
-            [self.rho - z, -1.0, -x],
-            [y, x, -self.beta]
-        ])
-    # no analytic solution
 #-------------------------------------------------------------
 class Lorenz(OdeExample):
     def __init__(self, sigma=10.0, rho=28.0, beta=8/3, t_end=20.0, x0=[-10, -4.45, 35.1]):
@@ -510,6 +516,19 @@ class VanDerPol(OdeExample):
     def df(self, t, u):
         return np.array([[0.0, 1.0],
                          [-1 - 2*self.mu*u[0]*u[1], self.mu*(1 - u[0]**2)]])
+
+    def plot(self, t, u):
+        import matplotlib.pyplot as plt
+        x, dxdt = u[0], u[1]
+        plt.figure(figsize=(8, 6))
+        plt.plot(x, dxdt, lw=0.7, label="Phase Portrait (Limit Cycle)")
+        plt.title("Van der Pol Oscillator - Limit Cycle")
+        plt.xlabel("x(t)")
+        plt.ylabel("dx/dt")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
     # no closed-form solution
 #-------------------------------------------------------------
 class Robertson(OdeExample):

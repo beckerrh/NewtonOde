@@ -96,6 +96,7 @@ class Newton:
             else:
                 self.iterdata.tol_missing = tol / resnorm
             result = self.nd.computeUpdate(r=res, x=x, info=self.iterdata)
+            if hasattr(result,'x'): x= result.x
             success = getattr(result, 'success', True)
             if not success:
                 self.iterdata.success = False
@@ -107,41 +108,45 @@ class Newton:
             dxnorm = result.update_norm
             gradient_iteration = iteration and (dxnorm>self.sdata.dxincrease_max*dxnorm_old)
             btit=0
-            if not gradient_iteration:
-                meritgrad = result.meritgrad
-                btresult = self.backtracking(x, dx, meritvalue, meritgrad)
-                x, step = btresult.x, btresult.step
-                btit += btresult.iter
-                if btresult.success:
-                    rr = btresult.residual_result
-                    res, resnorm, xnorm, meritvalue = rr.residual, rr.residual_norm, rr.x_norm, rr.meritvalue
-                else:
-                    gradient_iteration = True
-            if gradient_iteration:
-                if hasattr(self.nd, 'call_back_baxktrack_failed'):
-                    kwargs = {'btresult':btresult, 'dx':dx, 'r':res, 'dxnorm':dxnorm, 'dxnorm_old':dxnorm_old}
-                    self.nd.call_back_baxktrack_failed(**kwargs)
-                result = self.nd.computeResidual(x)
-                res, resnorm, meritvalue, xnorm = result.residual, result.residual_norm, result.meritvalue, result.x_norm
-                result = self.nd.computeUpdateSimple(r=res, x=x, info=self.iterdata)
-                dx = result.update
-                dxnorm = result.update_norm
-                meritgrad = result.meritgrad
-                bt_maxiter = self.sdata.bt_maxiter
-                self.sdata.bt_maxiter = 50
-                step =  getattr(self, 'step_grad', 1.0)
-                btresult = self.backtracking(x, dx, meritvalue, meritgrad, step)
-                x = btresult.x
-                self.step_grad = 2.0*btresult.step
-                res = btresult.residual_result.residual
-                resnorm = btresult.residual_result.residual_norm
+            if hasattr(self.nd,'update_rule'):
+                x,step=self.nd.update_rule(x, dx)
+            else:
+                if not gradient_iteration:
+                    meritgrad = result.meritgrad
+                    btresult = self.backtracking(x, dx, meritvalue, meritgrad)
+                    x, step = btresult.x, btresult.step
+                    btit += btresult.iter
+                    if btresult.success:
+                        rr = btresult.residual_result
+                        res, resnorm, xnorm, meritvalue = rr.residual, rr.residual_norm, rr.x_norm, rr.meritvalue
+                    else:
+                        gradient_iteration = True
+                print(f"{btresult.success=}")
+                if gradient_iteration:
+                    if hasattr(self.nd, 'call_back_backtrack_failed'):
+                        kwargs = {'btresult':btresult, 'dx':dx, 'r':res, 'dxnorm':dxnorm, 'dxnorm_old':dxnorm_old}
+                        self.nd.call_back_backtrack_failed(**kwargs)
+                    result = self.nd.computeResidual(x)
+                    res, resnorm, meritvalue, xnorm = result.residual, result.residual_norm, result.meritvalue, result.x_norm
+                    result = self.nd.computeUpdateSimple(r=res, x=x, info=self.iterdata)
+                    dx = result.update
+                    dxnorm = result.update_norm
+                    meritgrad = result.meritgrad
+                    bt_maxiter = self.sdata.bt_maxiter
+                    self.sdata.bt_maxiter = 50
+                    step =  getattr(self, 'step_grad', 1.0)
+                    btresult = self.backtracking(x, dx, meritvalue, meritgrad, step)
+                    x = btresult.x
+                    self.step_grad = 2.0*btresult.step
+                    res = btresult.residual_result.residual
+                    resnorm = btresult.residual_result.residual_norm
 
-                btit += btresult.iter
-                self.sdata.bt_maxiter = bt_maxiter
-                if not btresult.success:
-                    self.iterdata.success = False
-                    self.iterdata.failure = 'backtracking did not converge'
-                    return x, self.iterdata
+                    btit += btresult.iter
+                    self.sdata.bt_maxiter = bt_maxiter
+                    if not btresult.success:
+                        self.iterdata.success = False
+                        self.iterdata.failure = 'backtracking did not converge'
+                        return x, self.iterdata
             # dxnorm = np.linalg.norm(dx)
             self.iterdata.newstep(dxnorm, liniter, resnorm, step)
             # xnorm = np.linalg.norm(x)

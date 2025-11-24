@@ -116,11 +116,12 @@ class ODE_Legendre():
         plt.show()
     def x_norm(self, mesh, xall):
         x, xT = xall
+        assert x.shape[0] == len(mesh)-1, f"wrong size {x.shape=} {len(mesh)-1=}"
         dt = 0.5 * (mesh[1:] - mesh[:-1])
         integ = self.integration['coeff']
         x_vals = np.einsum('tjc,qj->tqc', x, integ.psi)
         T = mesh[-1]-mesh[0]
-        return np.einsum('t,q,tqc->', dt, integ.w, x_vals**2)/T
+        return np.einsum('t,q,tqc->', dt, integ.w, x_vals**2)
 
     def compute_residual(self, mesh, app, xall):
         nt = mesh.shape[0]
@@ -329,17 +330,17 @@ class ODE_Legendre():
             result.mu_cell = scale * self._compute_cellwide_L2projection(res_mu, integ, dt)
             result.mu_global = np.sqrt(np.sum(result.mu_cell))
         return result
-    def interpolate(self, ucoeff, mesh_new, refinfo):
-        u_h, u_T = ucoeff
+    def interpolate(self, xall, mesh_new, refinfo):
+        x, xT = xall
         # print(f"{mesh=}\n{mesh_new=}")
         refined_map, non_refined_map = refinfo
         n_new = len(mesh_new) - 1
-        u_h_new = np.empty((n_new, *u_h.shape[1:]), dtype=u_h.dtype)
+        xnew = np.empty((n_new, *x.shape[1:]), dtype=x.dtype)
         # --- Non-refined intervals: copy directly
         if len(non_refined_map):
             i_old = non_refined_map[:, 0]
             i_new = non_refined_map[:, 1]
-            u_h_new[i_new] = u_h[i_old]
+            xnew[i_new] = x[i_old]
         # --- Refined intervals: project onto two subintervals
         if len(refined_map):
             i_old = refined_map[:, 0]
@@ -347,10 +348,10 @@ class ODE_Legendre():
             i_newR = refined_map[:, 2]
             M_left, M_right = self.Mprolo
             # use einsum for (n_refine, n_dof, ncomp)
-            u_h_old = u_h[i_old]
-            u_h_new[i_newL] = np.einsum('jk,ikr->ijr', M_left, u_h_old)
-            u_h_new[i_newR] = np.einsum('jk,ikr->ijr', M_right, u_h_old)
-        return u_h_new, u_T
+            xold = x[i_old]
+            xnew[i_newL] = np.einsum('jk,ikr->ijr', M_left, xold)
+            xnew[i_newR] = np.einsum('jk,ikr->ijr', M_right, xold)
+        return xnew, xT
     def plot_dg(self, mesh, ucoeff, kwargs={}):
         import matplotlib.pyplot as plt
         label = kwargs.pop('label', None)

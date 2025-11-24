@@ -124,4 +124,19 @@ class CircleExponential(TestProblem):
             + self.d
             for i in range(self.ncomp)
         ])
+class BumpExample(TestProblem):
+    def bump(self, s):
+        # smooth compact bump: e^{-1/(1-s^2)} for |s|<1 else 0
+        y = np.zeros_like(s)
+        mask = np.abs(s) < 1
+        z = 1 - (s[mask])**2
+        y[mask] = np.exp(-1.0 / z)
+        return y
+
+    def f(self, x, eps=1e-2, J=10):
+        # scalar function
+        y = 0.5 * (x-1.0)**2
+        for j in range(1, J+1):
+            y += eps * 2.0**(-j) * self.bump(2.0**j * (x-1.0))
+        return y
 
