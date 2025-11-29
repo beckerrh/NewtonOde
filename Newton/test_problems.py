@@ -14,22 +14,26 @@ class NewtonDriverNumpy:
         else:
             self.F = kwargs.pop('F')
             self.dF = kwargs.pop('dF')
+    def computeMeritFunction(self, x):
+        return self.computeResidual(x)
     def computeResidual(self, x):
         xnorm = np.linalg.norm(x)
         r = self.F(x)
-        meritvalue = 0.5*np.sum(r**2)
-        resnorm = np.sqrt(2.0*meritvalue)
-        return SimpleNamespace(residual=r, meritvalue=meritvalue, residual_norm=resnorm, x_norm=xnorm)
+        resnorm = np.linalg.norm(r)
+        # meritvalue = 0.5*np.sum(r**2)
+        # resnorm = np.sqrt(2.0*meritvalue)
+        return SimpleNamespace(residual=r, meritvalue=resnorm, x_norm=xnorm)
     def computeUpdate(self, **kwargs):
         r = kwargs['r']
         x = kwargs['x']
-        J = np.atleast_2d(self.dF(x))
+        J = np.atleast_2d(self.dF(x).squeeze())
+        # J_norm = np.linalg.norm(J)
+        r = np.atleast_1d(r.squeeze())
         try:
             dx = np.linalg.solve(J, -r)
         except np.linalg.LinAlgError:
-            print(f"{J=}")
             assert None
-        return SimpleNamespace(update=dx, update_norm=np.linalg.norm(dx), meritgrad=-np.sum(r**2))
+        return SimpleNamespace(update=dx, update_norm=np.linalg.norm(dx), meritgrad=-np.linalg.norm(r))
     def computeUpdateSimple(self, **kwargs):
         r = kwargs['r']
         x = kwargs['x']

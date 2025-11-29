@@ -114,21 +114,22 @@ class ODE_Legendre():
         plt.legend()
         plt.grid()
         plt.show()
-    def x_norm(self, mesh, xall):
-        x, xT = xall
+    def norm_X(self, mesh, xall):
+        x = xall
         assert x.shape[0] == len(mesh)-1, f"wrong size {x.shape=} {len(mesh)-1=}"
         dt = 0.5 * (mesh[1:] - mesh[:-1])
         integ = self.integration['coeff']
         x_vals = np.einsum('tjc,qj->tqc', x, integ.psi)
         T = mesh[-1]-mesh[0]
-        return np.einsum('t,q,tqc->', dt, integ.w, x_vals**2)
+        return np.sqrt(np.einsum('t,q,tqc->', dt, integ.w, x_vals**2))
 
     def compute_residual(self, mesh, app, xall):
         nt = mesh.shape[0]
         assert mesh.ndim == 1
         nbasis = len(self.phi)
         ncomp = app.ncomp
-        rhs1 = np.zeros(shape=(nt, ncomp), dtype=self.M.dtype)
+        # rhs1 = np.zeros(shape=(nt, ncomp), dtype=self.M.dtype)
+        rhs1 = np.zeros(shape=(nt-1, ncomp), dtype=self.M.dtype)
         rhs2 = np.zeros(shape=(nt - 1, nbasis - 1, ncomp), dtype=self.M.dtype)
         tm, dt = 0.5 * (mesh[:-1] + mesh[1:]), 0.5 * (mesh[1:] - mesh[:-1])
 
@@ -136,7 +137,9 @@ class ODE_Legendre():
         t_rhs = tm[:, None] + dt[:, None] * integ.x[None, :]  # shape (nt-1, int_n)
         nint = integ.n
 
-        x, xT = xall
+        # x, xT = xall
+        x = xall
+        assert x.shape[0] == nt-1, f"wrong shape {x.shape=} {nt-1=}"
         # x_vals shape (nt-1, int_n, ncomp)
         x_vals = np.einsum('ijc,qj->iqc', x, integ.psi)
 
@@ -149,21 +152,34 @@ class ODE_Legendre():
 
         # --- Quadrature (vectorized) ---
         rhs1[0] = -app.x0
-        rhs1[:-1] -= np.einsum('t,i,tic->tc', dt, self.B[0], f_all)
-        rhs1[1:] -= np.einsum('t,i,tic->tc', dt, self.Bold, f_all)
+        # rhs1[:-1] -= np.einsum('t,i,tic->tc', dt, self.B[0], f_all)
+        # rhs1[1:] -= np.einsum('t,i,tic->tc', dt, self.Bold, f_all)
+        rhs1 -= np.einsum('t,i,tic->tc', dt, self.B[0], f_all)
+        rhs1[1:] -= np.einsum('t,i,tic->tc', dt[:-1], self.Bold, f_all[:-1])
         rhs2 -= np.einsum('t,bi,tic->tbc', dt, self.B[1:], f_all)
 
         # --- Derivative contributions ---
         # print(f"{nt=} {self.T[0]=} {x[:-1, 0].shape=} {rhs1[:-1].shape=}")
-        rhs1[:-1] -= self.T[0] * x[:, 0]
-        rhs1[1:] += self.T[0] * x[:, 0]
+        # rhs1[:-1] -= self.T[0] * x[:, 0]
+        # rhs1[1:] += self.T[0] * x[:, 0]
+        rhs1 -= self.T[0] * x[:, 0]
+        rhs1[1:] += self.T[0] * x[:-1, 0]
         rhs2 -= np.einsum('b,tbq->tbq', self.T[1:], x[:, 1:])
         # print(f"rhs1[-1] = {rhs1[-1]} {xT=}")
-        rhs1[-1] += xT
+        # rhs1[-1] += xT
         return rhs1, rhs2
+    def norm_residual(self, mesh, res):
+        res1, res2 = res
+        dt, dt2 =  mesh[1:] - mesh[:-1], mesh[2:] - mesh[:-2]
+        r1 = np.einsum('t,tc->', dt2, res1[1:]**2)
+        r1 +=  dt[0]*np.sum(res1[0]**2)
+        r2 = np.einsum('t,b,tbc->', dt, 1.0/self.T[1:], res2 ** 2)
+        return np.sqrt(r1+r2)
+
 
     def get_a_linearized(self, mesh, app, xall):
-        x, xT = xall
+        # x, xT = xall
+        x = xall
         nt = mesh.shape[0]
         ncomp = app.ncomp
         integ = self.integration['coeff']
@@ -181,11 +197,8 @@ class ODE_Legendre():
         assert mesh.ndim == 1
         nbasis = len(self.phi)
         ncomp = app.ncomp
-        x_coef = np.empty((nt - 1, nbasis, ncomp), dtype=self.M.dtype)
+        p_coef = np.empty((nt - 1, nbasis, ncomp), dtype=self.M.dtype)
         bloc = np.zeros((nbasis, ncomp), dtype=self.M.dtype)
-        # Aloc_template = np.zeros((nbasis, nbasis, ncomp, ncomp), dtype=self.M.dtype)
-        # for i in range(nbasis):
-        #     Aloc_template[i, i, :, :] = np.eye(ncomp) * self.T[i]
         a_vals, a0_vals = self.get_a_linearized(mesh, app, x)
         for it in range(nt - 1):
             bloc[0,:] += rhs1[it]
@@ -195,20 +208,25 @@ class ODE_Legendre():
             # --- Solve local system
             xsol = np.linalg.solve(Aflat, bloc.ravel()).reshape((nbasis, ncomp))
             # print(f"{it=}: {bloc.squeeze()=} {Aloc.squeeze()=} {xsol.squeeze()=}")
-            x_coef[it] = xsol
+            p_coef[it] = xsol
             bloc.fill(0)
             bloc[0] = self.T[0] * xsol[0] - np.einsum('icd,id->c', a0_vals[it], xsol)
-        x_T = - bloc[0] - rhs1[-1]
-        return x_coef, x_T
+        # x_T = - bloc[0] - rhs1[-1]
+        # return x_coef, x_T
+        return p_coef
+
+
     def solve_linear(self, mesh, app):
         ncomp = app.ncomp
-        x0 = np.zeros(shape=(len(mesh) - 1, self.k + 1, ncomp), dtype=mesh.dtype)
-        x = (x0, np.zeros(x0.shape[2]))
+        x = np.zeros(shape=(len(mesh) - 1, self.k + 1, ncomp), dtype=mesh.dtype)
+        # x0 = np.zeros(shape=(len(mesh) - 1, self.k + 1, ncomp), dtype=mesh.dtype)
+        # x = (x0, np.zeros(x0.shape[2]))
         res = self.compute_residual(mesh, app, x)
         # print(f"res = {res}")
-        du_h = self.solve_linearized(mesh, app, x, res)
+        p = self.solve_linearized(mesh, app, x, res)
         # print(f"du_h = {du_h}")
-        xnew = (x[0] + du_h[0], x[1] + du_h[1])
+        # xnew = (x[0] + du_h[0], x[1] + du_h[1])
+        xnew = x + p
         # print(f"xnew = {xnew}")
         res = self.compute_residual(mesh, app, xnew)
         print(f"res = {np.linalg.norm(res[0])}  {np.linalg.norm(res[1])}")
@@ -253,21 +271,26 @@ class ODE_Legendre():
             # print(f"{xT=} {app.solution(tm[it])=} {xsol[0]=}")
             bloc.fill(0.0)
             bloc[0] = -xT
-        return x_coef, xT
-    def interpolate_midpoint(self, mesh, ucoeff):
-        u_h, u_T = ucoeff
+        # return x_coef, xT
+        return x_coef
+
+
+    def interpolate_midpoint(self, mesh, xall):
+        # x, xT = xall
+        x = xall
         # print(f"{u_h.shape=} {u_T.shape=}")
         nt = mesh.shape[0]
-        nbasis, ncomp = u_h.shape[1], u_h.shape[2]
+        nbasis, ncomp = x.shape[1], x.shape[2]
         # nt, ncomp, nbasis = mesh.shape[0], u_h.shape[-1], u_h.shape[1]
-        assert u_h.shape == (nt-1, nbasis, ncomp)
-        u_mp = np.zeros(shape=(nt-1, ncomp), dtype=u_h.dtype)
+        assert x.shape == (nt-1, nbasis, ncomp), f"mismatch {nt-1=}, {x.shape=}"
+        xmp = np.zeros(shape=(nt-1, ncomp), dtype=x.dtype)
         for it in range(0,nt-1):
             for ii in range(len(self.midpoint)):
-                u_mp[it] += self.midpoint[ii] * u_h[it, 2*ii]
-        return 0.5*(mesh[1:]+mesh[:-1]), u_mp
-    def compute_error(self, mesh, ucoeff, solution):
-        u_h, u_T = ucoeff
+                xmp[it] += self.midpoint[ii] * x[it, 2*ii]
+        return 0.5*(mesh[1:]+mesh[:-1]), xmp
+    def compute_error(self, mesh, xall, solution):
+        # x, xT = xall
+        x = xall
         integ = self.integration['error']
         tm = 0.5 * (mesh[:-1] + mesh[1:])  # shape (nt-1,)
         dt = 0.5 * (mesh[1:] - mesh[:-1])  # shape (nt-1,)
@@ -278,7 +301,7 @@ class ODE_Legendre():
         if sol_q.ndim == 2:  sol_q = sol_q[:, :, None]
         # Evaluate basis functions at quadrature points
         psi_eval = np.array([[psi(x) for psi in self.psi] for x in integ.x])  # shape (nq, nbasis)
-        u_approx = np.einsum('ebk,qb->eqk', u_h, psi_eval)
+        u_approx = np.einsum('ebk,qb->eqk', x, psi_eval)
         # Compute element-wise error
         err = sol_q - u_approx  # shape (nt-1, nq, ncomp)
         # L2 error over elements
@@ -286,19 +309,53 @@ class ODE_Legendre():
         # Store error per element
         err_cell = np.sum(dt[:, None] * np.sum(integ.w[None, :, None] * err ** 2, axis=1), axis=1)
         return np.sqrt(err_l2), err_cell
-    def _compute_cellwide_L2projection(self, res, integ, dt):
+    def _compute_cellwise_L2projection(self, res, integ, dt, res2=None):
         psi_eval = integ.psi  # shape (nq, nbasis)
         psi_proj = psi_eval[:, :self.k]  # (nq, nbp)
         alpha = np.einsum('q,j,qj,tqc->tjc', integ.w, self.GdiagInv, psi_proj, res)
-        # reconstruct projection at quadrature points: proj_{t,q,c} = psi_proj[q,j] * alpha_{t,j,c}
         proj = np.einsum('qj,tjc->tqc', psi_proj, alpha)  # (nt-1, nq, ncomp)
-        # remainder and L2 per element (same as before)
         rtil = res - proj
-        r2_sumc = np.sum(rtil ** 2, axis=2)  # (nt-1, nq)
+        if res2 is None:
+            r2_sumc = np.sum(rtil ** 2, axis=2)  # (nt-1, nq)
+            return np.einsum('t, q,tq->t', dt ** 3, integ.w, r2_sumc)
+        alpha2 = np.einsum('q,j,qj,tqc->tjc', integ.w, self.GdiagInv, psi_proj, res2)
+        proj2 = np.einsum('qj,tjc->tqc', psi_proj, alpha2)  # (nt-1, nq, ncomp)
+        rtil2 = res2 - proj2
+        r2_sumc = np.sum(rtil*rtil2, axis=2)  # (nt-1, nq)
         return np.einsum('t, q,tq->t', dt ** 3, integ.w, r2_sumc)
+
+
+    def estimator_merit_grad(self, mesh, app, x, p):
+        nt = mesh.shape[0]
+        nbasis, ncomp = x.shape[1], x.shape[2]
+        # h = 2*dt!!
+        scale = 4.0 / np.pi ** 2 / (self.k + 1.0) ** 2
+        tm = 0.5 * (mesh[:-1] + mesh[1:])
+        dt = 0.5 * (mesh[1:] - mesh[:-1])
+        integ = self.integration['est']
+        x_vals = np.einsum('ejk,qj->eqk', x, integ.psi)  # e=element, q=quad, k=dim
+        p_vals = np.einsum('ejk,qj->eqk', p, integ.psi)  # e=element, q=quad, k=dim
+        t_est = tm[:, None] + dt[:, None] * integ.x[None, :]  # (nt-1, int_n)
+        res_1 = np.zeros(shape=(nt - 1, integ.n, ncomp), dtype=self.M.dtype)
+        res_2 = np.zeros(shape=(nt - 1, integ.n, ncomp), dtype=self.M.dtype)
+        for it in range(nt - 1):
+            for ii in range(integ.n):
+                f_vals = app.f(t_est[it, ii], x_vals[it, ii])
+                res_1[it, ii] = f_vals
+                df_vals = app.df(t_est[it, ii], x_vals[it, ii])
+                res_2[it, ii] = df_vals @ p_vals[it, ii]
+        eta_cell = scale * self._compute_cellwise_L2projection(res_1, integ, dt)
+        eta_grad = scale * self._compute_cellwise_L2projection(res_1, integ, dt, res_2)
+        return np.sum(eta_grad)/np.sum(eta_cell)
+
+
     def estimator(self, mesh, xall, app, pall=None):
-        x, xT = xall
-        if pall: p, pT = pall
+        # x, xT = xall
+        x = xall
+        # if pall: p, pT = pall
+        compute_zeta = pall is not None
+        if compute_zeta:
+            p = pall
         nt = mesh.shape[0]
         nbasis, ncomp = x.shape[1], x.shape[2]
         # h = 2*dt!!
@@ -307,7 +364,7 @@ class ODE_Legendre():
         dt = 0.5 * (mesh[1:] - mesh[:-1])
         integ = self.integration['est']
         x_vals = np.einsum('ejk,qj->eqk', x, integ.psi)  # e=element, q=quad, k=dim
-        if pall:
+        if compute_zeta:
             p_vals = np.einsum('ejk,qj->eqk', p, integ.psi)  # e=element, q=quad, k=dim
             res_zeta = np.zeros(shape=(nt-1, integ.n, ncomp), dtype=self.M.dtype)
             res_mu = np.zeros(shape=(nt - 1, integ.n, ncomp), dtype=self.M.dtype)
@@ -317,21 +374,22 @@ class ODE_Legendre():
             for ii in range(integ.n):
                 f_vals = app.f(t_est[it, ii], x_vals[it, ii])
                 res_eta[it, ii] = f_vals
-                if pall:
+                if compute_zeta:
                     df_vals = app.df(t_est[it, ii], x_vals[it, ii])
                     res_zeta[it, ii] = f_vals + df_vals @ p_vals[it, ii]
                     res_mu[it, ii] = df_vals @ p_vals[it, ii]
-        eta_cell = scale * self._compute_cellwide_L2projection(res_eta, integ, dt)
+        eta_cell = scale * self._compute_cellwise_L2projection(res_eta, integ, dt)
         eta_global = np.sqrt(np.sum(eta_cell))
         result = SimpleNamespace(eta_cell=eta_cell, eta_global=eta_global)
-        if pall:
-            result.zeta_cell = scale * self._compute_cellwide_L2projection(res_zeta, integ, dt)
+        if compute_zeta:
+            result.zeta_cell = scale * self._compute_cellwise_L2projection(res_zeta, integ, dt)
             result.zeta_global = np.sqrt(np.sum(result.zeta_cell))
-            result.mu_cell = scale * self._compute_cellwide_L2projection(res_mu, integ, dt)
+            result.mu_cell = scale * self._compute_cellwise_L2projection(res_mu, integ, dt)
             result.mu_global = np.sqrt(np.sum(result.mu_cell))
         return result
     def interpolate(self, xall, mesh_new, refinfo):
-        x, xT = xall
+        # x, xT = xall
+        x = xall
         # print(f"{mesh=}\n{mesh_new=}")
         refined_map, non_refined_map = refinfo
         n_new = len(mesh_new) - 1
@@ -351,8 +409,11 @@ class ODE_Legendre():
             xold = x[i_old]
             xnew[i_newL] = np.einsum('jk,ikr->ijr', M_left, xold)
             xnew[i_newR] = np.einsum('jk,ikr->ijr', M_right, xold)
-        return xnew, xT
-    def plot_dg(self, mesh, ucoeff, kwargs={}):
+        # return xnew, xT
+        return xnew
+
+
+def plot_dg(self, mesh, ucoeff, kwargs={}):
         import matplotlib.pyplot as plt
         label = kwargs.pop('label', None)
         mp, up = self.evaluate_on_integration_points(mesh, ucoeff[0])
@@ -422,7 +483,7 @@ if __name__ == "__main__":
                 plotting.plot_solutions(pd)
                 plt.show()
         ns = np.array(ns)
-        print(f"{errs_l2=}")
+        # print(f"{errs_l2=}")
         errs_l2 = np.array(errs_l2)
         etas = np.array(etas)
         # pdict = {'x': ns, 'y': {'L2': errs_l2, 'disc': errs_disc, 'eta': etas}}
@@ -438,11 +499,11 @@ if __name__ == "__main__":
     # app = ode_examples.TimeDependentShear()
     # app = ode_examples.TimeDependentRotation(t_end = 24)
     # app = ode_examples.LogOscillatory(t_end=1.0)
-    app = ode_examples.ArctanJump(t_end=3.0)
-    app = ode_examples.LinearPBInstability()
-    # app = ode_examples.LogFrequency(t_end=5.0)
+    # app = ode_examples.ArctanJump(t_end=2.0)
+    # app = ode_examples.LinearPBInstability()
+    app = ode_examples.LogFrequency(t_end=5.0)
     # app.check_linear()
-    check_error(app, k=2, niter=6, n0=3, plot=True, mesh_type='uniform')
+    check_error(app, k=0, niter=6, n0=3, plot=True, mesh_type='uniform')
 
     # cgp = ODE_Legendre(k=3)
     # cgp.plot_basis()

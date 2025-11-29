@@ -153,31 +153,68 @@ class TimeDependentRotation(OdeExample):
 #-------------------------------------------------------------
 #-------------------------------------------------------------
 class LogOscillatory(OdeExample):
-    def __init__(self, x0=np.array([1.0,0.0]), t_begin=0.0, t_end=1.0):
+    def __init__(self, x0=np.array([1.0,0.0]), t_begin=0.0, t_end=1.0,
+                 A=12.0, eps=1.0):
         super().__init__(x0, t_begin, t_end)
-        self.t0 = 0.5*(t_begin + t_end)
-
-    def omega(self, t):
-        return np.cos(np.log(np.abs(t - self.t0)))
+        self.t0 = 0.49*(t_begin + t_end)
+        self.A  = A      # vertical scaling
+        self.eps = eps    # horizontal scaling
 
     def theta(self, t):
-        x  = t - self.t0
-        x0 = 0 - self.t0
-        def prim(z):
-            return 0.5*z*(np.sin(np.log(np.abs(z))) +
-                           np.cos(np.log(np.abs(z))))
-        return prim(x) - prim(x0)
+        x = t - self.t0
+        return self.A * np.sign(x) * (x**2/(2*self.eps) * np.log(np.abs(x/self.eps)) - x**2/(4*self.eps))
+        return self.A * np.sign(x) * (0.5*x**2 * np.log(np.abs(x/self.eps)) - 0.25*x**2)
+        return self.A * np.sign(x) * (0.5*x**2/self.eps**2 * np.log(np.abs(x/self.eps)) - 0.25*x**2/self.eps**2) * self.eps**2
+
+    def theta_prime(self, t):
+        x = (t - self.t0)/self.eps
+        return self.A * np.abs(x) * np.log(np.abs(x/self.eps))
+        return self.A * np.abs(x) * np.log(np.abs(x)) / self.eps  # scale derivative
 
     def df(self, t, u):
-        w = self.omega(t)
+        w = self.theta_prime(t)
         return np.array([[0, -w], [w, 0]])
 
     def f(self, t, u):
         return self.df(t,u) @ u
 
     def solution(self, t):
-        th = self.theta(t)
+        th = self.theta(t) - self.theta(0)
         return np.column_stack([np.cos(th), np.sin(th)])
+    # def __init__(self, x0=np.array([1.0,0.0]), t_begin=0.0, t_end=1.0):
+    #     super().__init__(x0, t_begin, t_end)
+    #     self.t0 = 0.49*(t_begin + t_end)
+    #
+    # def theta_prime(self, t):
+    #     x  = np.abs(t - self.t0)
+    #     return x*np.log(x)
+    #     # return np.cos(np.log(np.abs(t - self.t0)))
+    #
+    # def s(self, t):
+    #     x  = t - self.t0
+    #     return 0.5*x**2*(np.log(np.abs(x))-0.5)
+    # def theta(self, t):
+    #     x  = t - self.t0
+    #     return np.sign(x) * (0.5 * x ** 2 * (np.log(np.abs(x)) - 0.5))
+    #
+    #     return self.s(t)-self.s(0)
+    #     # x  = t - self.t0
+    #     # x0 = 0 - self.t0
+    #     # def prim(z):
+    #     #     return 0.5*z*(np.sin(np.log(np.abs(z))) +
+    #     #                    np.cos(np.log(np.abs(z))))
+    #     # return prim(x) - prim(x0)
+    #
+    # def df(self, t, u):
+    #     w = self.theta_prime(t)
+    #     return np.array([[0, -w], [w, 0]])
+    #
+    # def f(self, t, u):
+    #     return self.df(t,u) @ u
+    #
+    # def solution(self, t):
+    #     th = self.theta(t) - self.theta(0)
+    #     return np.column_stack([np.cos(th), np.sin(th)])
 
 #-------------------------------------------------------------
 class ArctanJump(OdeExample):
@@ -261,6 +298,18 @@ class LinearPBInstability(OdeExample):
     def solution(self, t):
         th = self.theta(t)
         return np.array([np.cos(th), np.sin(th)]).T
+#-------------------------------------------------------------
+class Mathieu(OdeExample):
+    """Mathieu equation: u'' + (a + b cos t) u = 0"""
+    def __init__(self, a=1.0, b=0.5, x0=[1.0, 0.0], t_end=
+100.0):
+        super().__init__(x0=np.array(x0), t_end=t_end)
+        self.a, self.b = a, b
+    def f(self, t, u):
+        return np.array([u[1], -(self.a + self.b*np.cos(t)) * u[0]])
+    def df(self, t, u):
+        return np.array([[0.0, 1.0], [-(self.a + self.b*np.cos(t)), 0.0]])
+
 #=============================================================
 #-------------------------------------------------------------
 class Logistic(OdeExample):
@@ -486,6 +535,7 @@ class DoublePendulum(OdeExample):
 #-------------------------------------------------------------
 class Lorenz(OdeExample):
     def __init__(self, sigma=10.0, rho=28.0, beta=8/3, t_end=20.0, x0=[-10, -4.45, 35.1]):
+        x0 = [1.0,0,0]
         super().__init__(x0=np.array(x0), t_end=t_end)
         self.FP1 =  [np.sqrt(beta*(rho-1)), np.sqrt(beta*(rho-1)),rho-1]
         self.FP2 =  [-np.sqrt(beta*(rho-1)), -np.sqrt(beta*(rho-1)),rho-1]
@@ -533,36 +583,26 @@ class VanDerPol(OdeExample):
 #-------------------------------------------------------------
 class Robertson(OdeExample):
     """Classic stiff chemical kinetics system"""
-    def __init__(self, x0=[1.0, 0.0, 0.0], t_end=1e3):
+    def __init__(self, x0=[1.0, 0.0, 0.0], t_end=1.0):
         super().__init__(x0=np.array(x0), t_end=t_end)
-        # self.k1, self.k2, self.k3 = 0.04, 1e4, 3e7
-        self.k1, self.k2, self.k3 = 0.04, 3e7, 1e4
+        self.k1, self.k2, self.k3 = 0.04, 1e4, 3e7
+        # self.k1, self.k2, self.k3 = 0.04, 3e7, 1e4
 
     def f(self, t, u):
-        y1, y2, y3 = u
+        x,y,z = u
+        # print(f"{u}")
         return np.array([
-            -self.k1*y1 + self.k3*y2*y3,
-             self.k1*y1 - self.k2*y2*y2 - self.k3*y2*y3,
-             self.k2*y2*y2
+            -self.k1*x + self.k2*y*z,
+             self.k1*x - self.k2*y*z - self.k3*y**2,
+             self.k3*y**2
         ])
     def df(self, t, u):
-        y1, y2, y3 = u
+        x,y,z = u
         return np.array([
-            [-self.k1,         self.k3*y3,       self.k3*y2],
-            [ self.k1, -2*self.k2*y2 - self.k3*y3, -self.k3*y2],
-            [ 0.0,             2*self.k2*y2,       0.0]
+            [-self.k1,    self.k2*z,       self.k2*y],
+            [ self.k1, -2*self.k3*y - self.k2*z, -self.k2*y],
+            [ 0.0    ,             2*self.k3*y,       0.0]
         ])    # no analytic solution
-#-------------------------------------------------------------
-class Mathieu(OdeExample):
-    """Mathieu equation: u'' + (a + b cos t) u = 0"""
-    def __init__(self, a=1.0, b=0.5, x0=[1.0, 0.0], t_end=
-100.0):
-        super().__init__(x0=np.array(x0), t_end=t_end)
-        self.a, self.b = a, b
-    def f(self, t, u):
-        return np.array([u[1], -(self.a + self.b*np.cos(t)) * u[0]])
-    def df(self, t, u):
-        return np.array([[0.0, 1.0], [-(self.a + self.b*np.cos(t)), 0.0]])
 #-------------------------------------------------------------
 class NonlinearMix(OdeExample):
     """Mixed nonlinear system: du1/dt = -u2 + u1(1-u1²), du2/dt = u1 + u2(1-u2²)"""

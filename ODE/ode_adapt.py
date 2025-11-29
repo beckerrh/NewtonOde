@@ -1,6 +1,6 @@
 import numpy as np
 from ode_solver import ODE_Legendre
-from Utility import mesh1d, plotting
+from Utility import mesh1d, plotting, printer
 import ode_examples
 import matplotlib.pyplot as plt
 from types import SimpleNamespace
@@ -18,14 +18,14 @@ def plot_all(**kwargs):
     if hasattr(app, "solution"):
         u_true = app.solution(t_mp).squeeze()
         pd[app.name]['y']['sol'] = u_true
-    pd[app.name]['kwargs'] = {'app': {'marker': 'o'}}
+    # pd[app.name]['kwargs'] = {'app': {'marker': 'o'}}
     pd["Mesh"]['x'] = mesh
     hinv = 1.0 / (mesh[1:] - mesh[:-1])
     h0 = np.min(hinv)
     hinv /= h0
     pd["Mesh"]['y'] = {rf'$\frac{{{1/h0:.2e}}}{{h}}$': hinv}
     pd["Mesh"]['type'] = 'step'
-    cand_cell = ['zeta', 'eta', 'err']
+    cand_cell = ['zeta', 'eta', 'mu', 'err']
     cell_dict={}
     for c in cand_cell:
         if c in kwargs:
@@ -46,57 +46,81 @@ def plot_all(**kwargs):
 #==================================================================
 class Newton_Ode():
     def __init__(self, app, k=0, mesh=None, n0=12):
+        self.lam0 = 0.15
+        self.C0 = 100.0
+        self.beta = 1.0
+        self.theta = 0.9
         self.solver = ODE_Legendre(k, ncomp=app.ncomp)
         self.app = app
         if not mesh:
             self.mesh = mesh1d.mesh(app.t_begin, app.t_end, n=n0)
         else:
             self.mesh = mesh
+        types = {'it': 'd', 'zeta': 'e', 'N': 'd:7', '|p|':'e', 'eta': 'e', 'mer':'e'}
+        self.printer_mesh = printer.Printer(types=types, name="mesh")
+    def attach_printer(self, printer):
+        self.printer_newton = printer
+        self.printer_newton.add_types({'eta':'e', '|R|':'e', 'N': 'd:7'})
+        self.printer_newton.update(N=len(self.mesh))
     def initial_guess(self):
         return self.solver.solve_semi_implicit(self.mesh, self.app)
         nt = self.mesh.shape[0]
         nbasis = len(self.solver.phi)
         ncomp = 1 if np.ndim(self.app.x0) == 0 else len(self.app.x0)
-        x0 = np.asarray(self.app.x0)
+        # x0 = np.asarray(self.app.x0)
         x0all = np.zeros(shape=(nt-1, nbasis, ncomp))
         x0all[:,0] = x0
         # print(f"{x0=} {x0all=}")
-        return (x0all, x0)
+        return x0all
     def add_update(self, x, step, p):
-        xnew = (x[0]+step*p[0], x[1]+step*p[1])
-        return xnew
+        # xnew = (x[0]+step*p[0], x[1]+step*p[1])
+        return x + step*p
     # def update_rule(self, x, dx):
     #     xnew = self.add_update(x, 0.9, dx)
     #     return xnew, 0.9
-    def computeResidual(self, x):
+    def computeMeritGrad(self, x, dx, result_merit):
+        eta_grad = self.solver.estimator_merit_grad(self.mesh, self.app, x, dx)
+        print(f"{eta_grad=} {result_merit.resn=}")
+        return self.beta*eta_grad - result_merit.resn
+    def computeMeritFunction(self, x):
         res = self.solver.compute_residual(self.mesh, self.app, x)
+        resn = self.solver.norm_residual(self.mesh, res)
         result = self.solver.estimator(self.mesh, x, self.app)
-        resnorm = result.eta_global
+        meritvalue = self.beta*result.eta_global+resn
+        self.printer_newton.update(eta=result.eta_global)
+        self.printer_newton.values["|R|"] = resn
         # print(f"computeResidual {x=}\n{res=}")
         # resnorm = np.linalg.norm(res[0])+np.linalg.norm(res[1])
-        return SimpleNamespace(residual=res,
-                               meritvalue=resnorm,
-                               residual_norm=resnorm,
-                               x_norm=self.solver.x_norm(self.mesh, x))
+        return SimpleNamespace(meritvalue=meritvalue,
+                               x_norm=self.solver.norm_X(self.mesh, x),
+                               resn=resn)
     def computeUpdate(self, r, x, info):
-        print(f"{info.resnorm=}")
+        aimed = self.lam0*info.resnorm[-1]
         n_mesh_iter=100
+        print(f"{info.tol_aimed=}")
         for iter_mesh in range(n_mesh_iter):
+            r = self.solver.compute_residual(self.mesh, self.app, x)
+            resn = self.solver.norm_residual(self.mesh, r)
             p = self.solver.solve_linearized(self.mesh, self.app, x, r)
             result = self.solver.estimator(self.mesh, x, self.app, p)
-            print(f"\t {iter_mesh} \t {result.eta_global} \t {result.zeta_global}\t {len(self.mesh)}")
-            if result.zeta_global < info.resnorm[-1] or iter_mesh == n_mesh_iter - 1:
-                return SimpleNamespace(update=p, update_norm=self.solver.x_norm(self.mesh, p),
-                                    meritgrad=-np.sum(r[0]**2), x=x)
-            mesh_new, refinfo = mesh1d.adapt_mesh(self.mesh, result.zeta_cell, theta=0.8)
-            x = self.solver.interpolate(x, mesh_new, refinfo)
+            pnorm = self.solver.norm_X(self.mesh, p)
+            if iter_mesh == 0:
+                self.printer_mesh.print_names()
+            self.printer_mesh.update(it=iter_mesh, zeta=result.zeta_global,
+                                     N=len(self.mesh), eta=result.eta_global,
+                                     mer=self.beta*result.eta_global+resn)
+            self.printer_mesh.values['|p|'] = pnorm
+            self.printer_mesh.print()
+
+            # print(f"\t  {info.iter} \t {iter_mesh} \t {aimed} \t {result.eta_global} \t {result.zeta_global}\t {len(self.mesh)}\t {pnorm}")
+            if result.zeta_global <= aimed*min(1.0, self.C0*pnorm) or iter_mesh == n_mesh_iter - 1:
+                self.printer_newton.update(N=len(self.mesh))
+                return SimpleNamespace(update=p, update_norm=pnorm, x=x)
+            mesh_new, refinfo = mesh1d.adapt_mesh(self.mesh, result.zeta_cell, theta=self.theta)
+            xnew = self.solver.interpolate(x, mesh_new, refinfo)
+            x = xnew
             self.mesh = mesh_new
-            r = self.solver.compute_residual(self.mesh, self.app, x)
         assert None
-        # print(f"computeUpdate {x=}\n{p=}")
-        return SimpleNamespace(update=p,
-                               update_norm=self.solver.x_norm(self.mesh, p),
-                               meritgrad=-np.sum(r[0]**2))
     def call_back(self, **kwargs):
         x = kwargs["x"]
         iterdata = kwargs["iterdata"]
@@ -111,9 +135,9 @@ class Newton_Ode():
             print(f"{btresult.step=}")
         else:
             print(f"{kwargs['dxnorm']=} {kwargs['dxnorm_old']=}")
-    def plot(self, xs):
-        x, xT = xs
-        print(f"{x.shape=} {self.mesh.shape=}")
+    def plot(self, x):
+        pass
+        # print(f"{x.shape=} {self.mesh.shape=}")
 
 
 
@@ -220,8 +244,9 @@ def test_adaptive(app, solver, niter=6, plot=True):
 
 #------------------------------------------------------------------
 if __name__ == "__main__":
-    todo = 'semi_implicit'
+    # todo = 'semi_implicit'
     todo = 'nonlinear'
+    # todo = 'linear'
     np.random.seed(12)
     if todo == 'interpolation':
         test_interpolation()
@@ -234,16 +259,17 @@ if __name__ == "__main__":
         app = ode_examples.TimeDependentRotation()
         solver = ODE_Legendre(k=2, ncomp=app.ncomp)
         # app = ode_examples.RotScaleForce()
-        test_adaptive_linear(app, solver, semi_implicit=False, eta_rtol=1e-6)
+        test_adaptive_linear(app, solver, semi_implicit=False, eta_rtol=1e-6, plot=True)
     elif todo == 'semi_implicit':
         # app = ode_examples.TimeDependentRotation()
         # app = ode_examples.LinearSingular()
         # app = ode_examples.ArctanJump(eps=0.05)
         # app = ode_examples.Logistic(t_end=10)
-        app = ode_examples.Lorenz(t_end=15, x0=[1.0, 1.0, 1.0])
-        # app = ode_examples.LinearPBInstability(t_end=10.0)
+        app = ode_examples.Lorenz(t_end=18, x0=[1.0, 1.0, 1.0])
+        app = ode_examples.LinearPBInstability(t_end=10.0)
+        app = ode_examples.Robertson(t_end=100.0) # needs very fine initial mesh
         solver = ODE_Legendre(k=0, ncomp=app.ncomp, est_degree=20, error_degree=20)
-        test_adaptive_linear(app, solver, semi_implicit=True, eta_rtol=1e-6, plot=True, n0=100, niter=30)
+        test_adaptive_linear(app, solver, semi_implicit=True, eta_rtol=1e-6, plot=True, n0=500, niter=1)
         # compare_adaptive_linear(app, solver, semi_implicit=True, eta_rtol=1e-6, niter=100, n0=20)
     else:
         from Newton import newton, newtondata
@@ -252,17 +278,17 @@ if __name__ == "__main__":
         # app = ode_examples.ExponentialJordan(lam=2.2)
         # app = ode_examples.Logistic()
         # app = ode_examples.Pendulum(t_end=13)
-        # app = ode_examples.DoublePendulum(t_end=20)
-        app = ode_examples.VanDerPol(t_end=40.0)
-        # app = ode_examples.Robertson()
-        # app = ode_examples.Lorenz()
+        app = ode_examples.DoublePendulum(t_end=25)
+        # app = ode_examples.VanDerPol(t_end=32.0)
+        # app = ode_examples.Robertson(t_end=1.0)
+        # app = ode_examples.Lorenz(t_end=20)
         # app = ode_examples.Mathieu()
         # app = ode_examples.NonlinearMix()
         # app = ode_examples.Mathieu()
-        sdata = newtondata.StoppingParamaters(bt_maxiter=50, bt_c=0.01)
-        solver = Newton_Ode(app, k=0, n0=600)
+        sdata = newtondata.StoppingParamaters(maxiter=300, rtol=1e-6, bt_maxiter=50, bt_c=0.01, bt_omega=0.5, divx=1e20)
+        solver = Newton_Ode(app, k=5, n0=600)
         x0 = solver.initial_guess()
-        newton = newton.Newton(nd = solver, verbose=2, sdata=sdata)
+        newton = newton.Newton(nd = solver, verbose=2, sdata=sdata, verbose_bt=True)
         xs, info = newton.solve(x0)
         if not info.success:
             print(f"@@@@@@@@@@@@@@@@ {info.failure}")

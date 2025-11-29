@@ -25,7 +25,7 @@ class StoppingParamaters:
         self.bt_omega = kwargs.pop('bt_omega',0.75)
         self.bt_c = kwargs.pop('bt_c',0.01)
         self.maxter_stepsize = 5
-        self.dxincrease_max = 100.0
+        self.dxincrease_max = 1e10
 
 class IterationData:
     def __repr__(self):
