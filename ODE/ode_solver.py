@@ -114,16 +114,14 @@ class ODE_Legendre():
         plt.legend()
         plt.grid()
         plt.show()
-    def norm_X(self, mesh, xall):
-        x = xall
+    def norm_X(self, mesh, x):
         assert x.shape[0] == len(mesh)-1, f"wrong size {x.shape=} {len(mesh)-1=}"
         dt = 0.5 * (mesh[1:] - mesh[:-1])
         integ = self.integration['coeff']
         x_vals = np.einsum('tjc,qj->tqc', x, integ.psi)
-        T = mesh[-1]-mesh[0]
         return np.sqrt(np.einsum('t,q,tqc->', dt, integ.w, x_vals**2))
 
-    def compute_residual(self, mesh, app, xall):
+    def compute_residual(self, mesh, app, x):
         nt = mesh.shape[0]
         assert mesh.ndim == 1
         nbasis = len(self.phi)
@@ -137,8 +135,6 @@ class ODE_Legendre():
         t_rhs = tm[:, None] + dt[:, None] * integ.x[None, :]  # shape (nt-1, int_n)
         nint = integ.n
 
-        # x, xT = xall
-        x = xall
         assert x.shape[0] == nt-1, f"wrong shape {x.shape=} {nt-1=}"
         # x_vals shape (nt-1, int_n, ncomp)
         x_vals = np.einsum('ijc,qj->iqc', x, integ.psi)
@@ -159,14 +155,9 @@ class ODE_Legendre():
         rhs2 -= np.einsum('t,bi,tic->tbc', dt, self.B[1:], f_all)
 
         # --- Derivative contributions ---
-        # print(f"{nt=} {self.T[0]=} {x[:-1, 0].shape=} {rhs1[:-1].shape=}")
-        # rhs1[:-1] -= self.T[0] * x[:, 0]
-        # rhs1[1:] += self.T[0] * x[:, 0]
         rhs1 -= self.T[0] * x[:, 0]
         rhs1[1:] += self.T[0] * x[:-1, 0]
         rhs2 -= np.einsum('b,tbq->tbq', self.T[1:], x[:, 1:])
-        # print(f"rhs1[-1] = {rhs1[-1]} {xT=}")
-        # rhs1[-1] += xT
         return rhs1, rhs2
     def norm_residual(self, mesh, res):
         res1, res2 = res
@@ -211,8 +202,6 @@ class ODE_Legendre():
             p_coef[it] = xsol
             bloc.fill(0)
             bloc[0] = self.T[0] * xsol[0] - np.einsum('icd,id->c', a0_vals[it], xsol)
-        # x_T = - bloc[0] - rhs1[-1]
-        # return x_coef, x_T
         return p_coef
 
 
@@ -271,7 +260,6 @@ class ODE_Legendre():
             # print(f"{xT=} {app.solution(tm[it])=} {xsol[0]=}")
             bloc.fill(0.0)
             bloc[0] = -xT
-        # return x_coef, xT
         return x_coef
 
 
@@ -288,9 +276,7 @@ class ODE_Legendre():
             for ii in range(len(self.midpoint)):
                 xmp[it] += self.midpoint[ii] * x[it, 2*ii]
         return 0.5*(mesh[1:]+mesh[:-1]), xmp
-    def compute_error(self, mesh, xall, solution):
-        # x, xT = xall
-        x = xall
+    def compute_error(self, mesh, x, solution):
         integ = self.integration['error']
         tm = 0.5 * (mesh[:-1] + mesh[1:])  # shape (nt-1,)
         dt = 0.5 * (mesh[1:] - mesh[:-1])  # shape (nt-1,)
@@ -349,10 +335,7 @@ class ODE_Legendre():
         return np.sum(eta_grad)/np.sum(eta_cell)
 
 
-    def estimator(self, mesh, xall, app, pall=None):
-        # x, xT = xall
-        x = xall
-        # if pall: p, pT = pall
+    def estimator(self, mesh, x, app, pall=None):
         compute_zeta = pall is not None
         if compute_zeta:
             p = pall
@@ -432,14 +415,14 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import time
 
-    def check_error(app, k=0, n0=10, niter=6, plot=False, mesh_type="uniform"):
+    def check_error(app, k=0, n0=10, niter=6, plot=False, mesh_type="random"):
         cgp = ODE_Legendre(k=k, ncomp=app.ncomp)
         n = n0
         ns, errs_l2, errs_disc, etas = [], [], [], []
-        types = {'n': 'i', 'solve': 'f', 'err': 'f', 'est': 'f', 'eff': 'f'}
-        pr = printer.Printer(types=types)
+        types = {'n': 'i', 'solve': 'f', 'err': 'e', 'est': 'e', 'eff': 'f', 't_err': 'e', 't_est': 'e'}
+        pr = printer.Printer(types=types, name="Toto")
         pr.print_names()
-        ncomp = app.ncomp
+        # ncomp = app.ncomp
         for it in range(niter):
             n *=2
             ns.append(n)
@@ -463,10 +446,12 @@ if __name__ == "__main__":
             el2, err = cgp.compute_error(mesh, x, app.solution)
             errs_l2.append(el2)
             t2 = time.time()
-            est = cgp.estimator(mesh=mesh, xall=x, app=app)
+            est = cgp.estimator(mesh=mesh, x=x, app=app)
             etas.append(est.eta_global)
             t3 = time.time()
-            pr.values = {'n': n, 'solve': t1-t0, 'err': t2-t1, 'est': t3-t2, 'eff':el2/est.eta_global}
+            pr.update(n=n, solve=t1-t0, err=el2, est=est.eta_global, t_err=t2-t1, t_est=t3-t2, eff=el2/est.eta_global)
+            # pr.update(n=n, solve=t1-t0, err=el2, est=est, t_err=t2-t1, t_est=t3-t2, eff=el2/est.eta_global)
+            # pr.values = {'n': n, 'solve': t1-t0, 'err': t2-t1, 'est': t3-t2, 'eff':el2/est.eta_global}
             pr.print()
             if plot:
                 t_mp, u_mp = cgp.interpolate_midpoint(mesh, x)
@@ -496,14 +481,14 @@ if __name__ == "__main__":
     # app = ode_examples.PolynomialIntegration(degree=9, ncomp=2, seed=17)
     # app = ode_examples.Exponential(lam=1.2)
     # app = ode_examples.ExponentialJordan()
-    # app = ode_examples.TimeDependentShear()
+    app = ode_examples.TimeDependentShear()
     # app = ode_examples.TimeDependentRotation(t_end = 24)
     # app = ode_examples.LogOscillatory(t_end=1.0)
+    # kaputt
     # app = ode_examples.ArctanJump(t_end=2.0)
     # app = ode_examples.LinearPBInstability()
-    app = ode_examples.LogFrequency(t_end=5.0)
     # app.check_linear()
-    check_error(app, k=0, niter=6, n0=3, plot=True, mesh_type='uniform')
+    check_error(app, k=0, niter=6, n0=30, plot=True, mesh_type='uniform')
 
     # cgp = ODE_Legendre(k=3)
     # cgp.plot_basis()

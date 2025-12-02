@@ -85,9 +85,9 @@ class Newton_Ode():
         # print(f"computeResidual {x=}\n{res=}")
         # meritvalue = np.linalg.norm(res[0])+np.linalg.norm(res[1])
         return SimpleNamespace(meritvalue=meritvalue,
-                               x_norm=self.solver.norm_X(self.mesh, x),
+                               norm_X=self.solver.norm_X(self.mesh, x),
                                resn=resn)
-    def computeUpdate(self, r, x, info, result_merit):
+    def computeUpdate(self, r, x, info):
         # print(f"{info.meritvalue[-1]=}\n{result_merit=}")
         aimed = self.lam0*info.meritvalue[-1]
         n_mesh_iter=100
@@ -271,17 +271,17 @@ if __name__ == "__main__":
         from Newton import newton, newtondata
         # app = ode_examples.PolynomialIntegration(degree=8, ncomp=2)
         # app = ode_examples.Exponential(lam=0.2)
-        app = ode_examples.ExponentialJordan(lam=2.2)
+        # app = ode_examples.ExponentialJordan(lam=2.2)
         # app = ode_examples.Logistic()
         # app = ode_examples.Pendulum(t_end=13)
         # app = ode_examples.DoublePendulum(t_end=25)
-        # app = ode_examples.VanDerPol(t_end=32.0)
+        app = ode_examples.VanDerPol(t_end=40.0)
         # app = ode_examples.Robertson(t_end=1.0)
         # app = ode_examples.Lorenz(t_end=25)
         # app = ode_examples.NonlinearMix()
         # app = ode_examples.Mathieu()
-        sdata = newtondata.StoppingParamaters(maxiter=300, rtol=1e-6, bt_maxiter=50, bt_c=0.01, bt_omega=0.5, divx=1e20)
-        solver = Newton_Ode(app, k=1, n0=800)
+        sdata = newtondata.StoppingParamaters(maxiter=500, rtol=1e-6, bt_maxiter=30, bt_c=0.01, bt_omega=0.5, divx=1e20)
+        solver = Newton_Ode(app, k=1, n0=500)
         x0 = solver.initial_guess()
         newton = newton.Newton(nd = solver, verbose=2, sdata=sdata, verbose_bt=False)
         xs, info, printer = newton.solve(x0)

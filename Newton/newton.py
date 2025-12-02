@@ -97,7 +97,7 @@ class Newton:
                 else:
                     result_merit = self.nd.computeMeritFunction(x)
                 res = getattr(result_merit, 'residual', None)
-                meritvalue, xnorm = result_merit.meritvalue, result_merit.x_norm
+                meritvalue, xnorm = result_merit.meritvalue, result_merit.norm_X
                 self.iterdata.reset(meritvalue)
                 tol = max(atol, rtol * meritvalue)
                 toldx = max(atoldx, rtoldx * xnorm)
@@ -112,7 +112,7 @@ class Newton:
             #else:
             self.iterdata.tol_missing = tol / meritvalue
             self.iterdata.tol_aimed = tol
-            result = self.nd.computeUpdate(r=res, x=x, info=self.iterdata, result_merit=result_merit)
+            result = self.nd.computeUpdate(r=res, x=x, info=self.iterdata)
             if hasattr(result,'x'): x= result.x
             success = getattr(result, 'success', True)
             if not success:
@@ -139,7 +139,7 @@ class Newton:
                     btit += btresult.iter
                     if btresult.success:
                         result_merit = btresult.merit_result
-                        xnorm, meritvalue = result_merit.x_norm, result_merit.meritvalue
+                        xnorm, meritvalue = result_merit.norm_X, result_merit.meritvalue
                     else:
                         gradient_iteration = True
                 if gradient_iteration:
@@ -148,7 +148,7 @@ class Newton:
                         kwargs = {'btresult':btresult, 'dx':dx, 'r':res, 'dxnorm':dxnorm, 'dxnorm_old':dxnorm_old}
                         self.nd.call_back_backtrack_failed(**kwargs)
                     result = self.nd.computeResidual(x)
-                    res, resnorm, meritvalue, xnorm = result.residual, result.residual_norm, result.meritvalue, result.norm_X
+                    res, meritvalue, xnorm = result.residual, result.meritvalue, result.norm_X
                     result = self.nd.computeUpdateSimple(r=res, x=x, info=self.iterdata)
                     dx = result.update
                     dxnorm = result.update_norm
@@ -159,8 +159,8 @@ class Newton:
                     btresult = self.backtracking(x, dx, meritvalue, meritgrad, step)
                     x = btresult.x
                     self.step_grad = 2.0*btresult.step
-                    res = btresult.residual_result.residual
-                    resnorm = btresult.residual_result.residual_norm
+                    res = btresult.merit_result.residual
+                    # resnorm = btresult.merit_result.residual_norm
 
                     btit += btresult.iter
                     self.sdata.bt_maxiter = bt_maxiter
@@ -212,7 +212,7 @@ if __name__ == '__main__':
         nd = test_problems.NewtonDriverNumpy(test_problem=instance)
         newton = Newton(nd=nd)
         # newton.verbose_bt = True
-        xs, info = newton.solve(instance.x0, maxiter=50)
+        xs, info, printer = newton.solve(instance.x0, maxiter=50)
         if not info.success:
             print(f"@@@@@@@@@@@@@@@@ {info.failure}")
         if xs.shape[0] ==1:

@@ -55,22 +55,4 @@ def adapt_mesh(mesh, eta, theta=0.75):
     #     print(f"Old interval {i}: new left={meshnew[l]:.3f}, new mid={meshnew[m]:.3f}")
     return meshnew, (refined_map, non_refined_map)
 
-    old_pos = invperm[:nt]  # new positions of old mesh points
-    mid_pos = invperm[nt:][np.argsort(refine)]  # new positions of midpoints (sorted like refine)
-
-    # --- 4. Build mapping arrays directly
-    refined_map = np.stack(
-        [refine,
-         np.minimum(old_pos[refine], mid_pos),
-         np.maximum(old_pos[refine], mid_pos)],
-        axis=1
-    )
-    non_refined_map = np.stack(
-        [non_refined,
-         np.minimum(old_pos[non_refined], old_pos[non_refined + 1])],
-        axis=1
-    )
-    # print(f"{refined_map=} {non_refined_map=}")
-    return meshnew, (refined_map, non_refined_map)
-
 
