@@ -21,7 +21,7 @@ class NewtonDriverNumpy:
         r = self.F(x)
         resnorm = np.linalg.norm(r)
         # meritvalue = 0.5*np.sum(r**2)
-        # resnorm = np.sqrt(2.0*meritvalue)
+        # meritvalue = np.sqrt(2.0*meritvalue)
         return SimpleNamespace(residual=r, meritvalue=resnorm, x_norm=xnorm)
     def computeUpdate(self, **kwargs):
         r = kwargs['r']

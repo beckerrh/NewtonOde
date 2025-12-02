@@ -534,8 +534,8 @@ class DoublePendulum(OdeExample):
         plt.show()
 #-------------------------------------------------------------
 class Lorenz(OdeExample):
-    def __init__(self, sigma=10.0, rho=28.0, beta=8/3, t_end=20.0, x0=[-10, -4.45, 35.1]):
-        x0 = [1.0,0,0]
+    def __init__(self, sigma=10.0, rho=28.0, beta=8/3, t_end=20.0, x0=[1.0,0,0]):
+        # x0 = [-10, -4.45, 35.1]
         super().__init__(x0=np.array(x0), t_end=t_end)
         self.FP1 =  [np.sqrt(beta*(rho-1)), np.sqrt(beta*(rho-1)),rho-1]
         self.FP2 =  [-np.sqrt(beta*(rho-1)), -np.sqrt(beta*(rho-1)),rho-1]

@@ -112,7 +112,7 @@ class Newton:
             #else:
             self.iterdata.tol_missing = tol / meritvalue
             self.iterdata.tol_aimed = tol
-            result = self.nd.computeUpdate(r=res, x=x, info=self.iterdata)
+            result = self.nd.computeUpdate(r=res, x=x, info=self.iterdata, result_merit=result_merit)
             if hasattr(result,'x'): x= result.x
             success = getattr(result, 'success', True)
             if not success:
@@ -184,14 +184,14 @@ class Newton:
                 kwargs = {'x':x, 'iterdata':self.iterdata}
                 self.nd.call_back(**kwargs)
             if meritvalue<tol:
-                return x, self.iterdata
+                return x, self.iterdata, self.printer
             if xnorm >= divx:
                 self.iterdata.success = False
                 self.iterdata.failure = 'divx'
-                return x, self.iterdata
+                return x, self.iterdata, self.printer
         self.iterdata.success = False
         self.iterdata.failure = 'maxiter exceded'
-        return x, self.iterdata
+        return x, self.iterdata, self.printer
 
 
 # ------------------------------------------------------ #

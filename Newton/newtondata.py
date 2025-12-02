@@ -41,23 +41,23 @@ class IterationData:
         return self.totaliter/self.calls
     def niter_lin_mean(self):
         return np.mean(np.array(self.liniter))
-    def reset(self, resnorm):
+    def reset(self, meritvalue):
         self.calls += 1
         if hasattr(self, 'iter'): self.totaliter += self.iter
         if hasattr(self, 'liniter'): self.totalliniter += np.sum(self.liniter)
-        self.liniter, self.dxnorm, self.resnorm, self.step = [], [], [], []
+        self.liniter, self.dxnorm, self.meritvalue, self.step = [], [], [], []
         self.iter = 0
         self.success = True
-        self.resnorm.append(resnorm)
+        self.meritvalue.append(meritvalue)
     def newstep(self, dxnorm, liniter, resnorm, step):
         self.liniter.append(liniter)
         self.dxnorm.append(dxnorm)
-        self.resnorm.append(resnorm)
+        self.meritvalue.append(resnorm)
         self.step.append(step)
         if len(self.dxnorm)>1:
             self.rhodx = self.dxnorm[-1]/self.dxnorm[-2]
         else:
             self.rhodx = 0
-        self.rhor = self.resnorm[-1]/self.resnorm[-2]
+        self.rhor = self.meritvalue[-1] / self.meritvalue[-2]
         self.iter += 1
        
