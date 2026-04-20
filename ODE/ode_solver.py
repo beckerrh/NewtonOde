@@ -1,5 +1,3 @@
-# import jax
-# jax.config.update("jax_enable_x64", True)
 import numpy as np
 from types import SimpleNamespace
 from scipy.linalg import lu_factor, lu_solve

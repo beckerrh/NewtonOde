@@ -108,6 +108,14 @@ class Exponential(OdeExample):
     # def b_coef(self, t): return np.array([0.0])
     def solution(self, t):
         return np.stack([self.x0*np.exp(self.lam*t)], axis=-1)
+#-------------------------------------------------------------
+class BlowUp(OdeExample):
+    def __init__(self, x0=1.0, t_begin=0.0, t_end=1.0, lam=1.1):
+        super().__init__(x0, t_begin, t_end)
+    def f(self, t, u): return u**2
+    def df(self, t, u): return 2*u
+    def solution(self, t):
+        return np.stack([self.x0/(1-self.x0*t)], axis=-1)
 
 #-------------------------------------------------------------
 class ExponentialJordan(OdeExample):
