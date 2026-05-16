@@ -3,7 +3,7 @@
 from scipy.optimize import newton
 
 assert __name__ == '__main__'
-import newton, test_problems
+import oldnewton, test_problems
 import numpy as np
 import matplotlib.pyplot as plt
 import jax

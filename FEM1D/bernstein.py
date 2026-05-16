@@ -51,3 +51,28 @@ def reference_integration(degree, k):
         dphi=dphi,
         d2phi=d2phi,
     )
+
+# -------------------------------------------------------------
+def subdivide_bernstein_midpoint(c):
+    """
+    Subdivide Bernstein coefficients on [0,1] into coefficients
+    on [0,1/2] and [1/2,1].
+
+    Convention:
+        B_i^k(x) = C(k,i) x^i (1-x)^{k-i}
+    so c[0] is the left endpoint and c[k] is the right endpoint.
+    """
+    k = c.shape[0] - 1
+
+    levels = [c.copy()]
+    for r in range(1, k + 1):
+        prev = levels[-1]
+        levels.append(0.5 * (prev[:-1, :] + prev[1:, :]))
+
+    cleft = np.zeros_like(c)
+    cright = np.zeros_like(c)
+    for i in range(k + 1):
+        cleft[i, :] = levels[i][0, :]
+        cright[i, :] = levels[k - i][i, :]
+
+    return cleft, cright

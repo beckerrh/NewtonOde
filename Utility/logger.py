@@ -1,4 +1,4 @@
-class Printer:
+class Logger:
     def __init__(self, types, name='My nice iteration', verbose=True, history=True):
         self.name = name
         self.verbose = verbose

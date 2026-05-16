@@ -3,7 +3,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 import numpy as np
 from ode_solver import ODE_Legendre
-from Utility import mesh1d, plotting, printer
+from Utility import mesh1d, plotting, logger
 import ode_examples
 import matplotlib.pyplot as plt
 from types import SimpleNamespace
@@ -15,32 +15,27 @@ def plot_all(**kwargs):
     x = kwargs.get("x")
     solver = kwargs.get("solver")
     t_mp, u_mp = solver.interpolate_midpoint(mesh, x)
-    pd = {app.name: {}, "Mesh": {}}
+    # pd = {app.name: {}, "Mesh": {}}
+    pd = {app.name: {}}
     pd[app.name]['x'] = t_mp
     pd[app.name]['y'] = {'app': u_mp}
     if hasattr(app, "solution"):
         u_true = app.solution(t_mp).squeeze()
         pd[app.name]['y']['sol'] = u_true
-    # pd[app.name]['kwargs'] = {'app': {'marker': 'o'}}
-    pd["Mesh"]['x'] = mesh
-    hinv = 1.0 / (mesh[1:] - mesh[:-1])
-    h0 = np.min(hinv)
-    hinv /= h0
-    pd["Mesh"]['y'] = {rf'$\frac{{{1/h0:.2e}}}{{h}}$': hinv}
-    pd["Mesh"]['type'] = 'step'
-    cand_cell = ['zeta', 'eta', 'mu', 'err']
-    cell_dict={}
-    for c in cand_cell:
-        if c in kwargs:
-            cell_dict[c] = kwargs[c]
-    if len(cell_dict):
-        pd["Estimator"] = {}
-        pd["Estimator"]['x'] = t_mp
-        pd["Estimator"]['y'] = {}
-    for c,v in cell_dict.items():
-        pd["Estimator"]['y'][c] = v
+    # cand_cell = ['zeta', 'eta', 'mu', 'err']
+    # cell_dict={}
+    # for c in cand_cell:
+    #     if c in kwargs:
+    #         cell_dict[c] = kwargs[c]
+    # if len(cell_dict):
+    #     pd["Estimator"] = {}
+    #     pd["Estimator"]['x'] = t_mp
+    #     pd["Estimator"]['y'] = {}
+    # for c,v in cell_dict.items():
+    #     pd["Estimator"]['y'][c] = v
     # pd["Estimator"]['y'] = {'zeta_cell': zeta_cell, 'eta': eta_cell, 'err': err_cell}
     title = kwargs.get("title", app.name)
+    pd = plotting.add_mesh1d(pd, mesh)
     plotting.plot_solutions(pd, title=title)
     if hasattr(app, "plot"): app.plot(t_mp, u_mp.T)
     plt.show()
@@ -60,36 +55,30 @@ class Newton_Ode():
         else:
             self.mesh = mesh
         types = {'it': 'd', 'zeta': 'e', 'N': 'd:7', '|p|':'e', 'eta': 'e', 'mer':'e', 'mu':'e'}
-        self.printer_mesh = printer.Printer(types=types, name="mesh")
-    def attach_printer(self, printer):
-        self.printer_newton = printer
-        self.printer_newton.add_types({'eta':'e', '|R|':'e', 'N': 'd:7', 'meshiter': 'd:3'})
-        self.printer_newton.update(N=len(self.mesh))
+        self.logger_mesh = logger.Logger(types=types, name="mesh")
+    def attach_logger(self, logger):
+        self.logger_newton = logger
+        self.logger_newton.add_types({'eta':'e', '|R|':'e', 'N': 'd:7', 'meshiter': 'd:3'})
+        self.logger_newton.update(N=len(self.mesh))
     def initial_guess(self):
         return self.solver.solve_semi_implicit(self.mesh, self.app)
     def add_update(self, x, step, p):
         return x + step*p
-    # def update_rule(self, x, dx):
-    #     xnew = self.add_update(x, 0.9, dx)
-    #     return xnew, 0.9
-    def computeMeritGrad(self, x, dx, result_merit):
+    def computeMeritGrad(self, x, dx, merit_value):
         eta_grad = self.solver.estimator_merit_grad(self.mesh, self.app, x, dx)
-        return eta_grad - self.beta*result_merit.resn
-    def computeMeritFunction(self, x):
+        return eta_grad - self.beta*merit_value
+    def evaluate(self, x):
         res = self.solver.compute_residual(self.mesh, self.app, x)
         resn = self.solver.norm_residual(self.mesh, res)
         result = self.solver.estimator(self.mesh, x, self.app)
         meritvalue = result.eta_global+self.beta*resn
-        self.printer_newton.update(eta=result.eta_global)
-        self.printer_newton.values["|R|"] = resn
-        # print(f"computeResidual {x=}\n{res=}")
-        # meritvalue = np.linalg.norm(res[0])+np.linalg.norm(res[1])
-        return SimpleNamespace(meritvalue=meritvalue,
-                               norm_X=self.solver.norm_X(self.mesh, x),
-                               resn=resn)
-    def computeUpdate(self, r, x, info):
-        # print(f"{info.meritvalue[-1]=}\n{result_merit=}")
-        aimed = self.lam0*info.meritvalue[-1]
+        self.logger_newton.update(eta=result.eta_global)
+        self.logger_newton.values["|R|"] = resn
+        xnorm = self.solver.norm_X(self.mesh, x)
+        return SimpleNamespace(residual=res, meritvalue=meritvalue, norm_X=xnorm)
+
+    def compute_newton_step(self,  x, state, iterdata):
+        aimed = self.lam0*state.meritvalue
         n_mesh_iter=100
         for iter_mesh in range(n_mesh_iter):
             r = self.solver.compute_residual(self.mesh, self.app, x)
@@ -98,41 +87,30 @@ class Newton_Ode():
             result = self.solver.estimator(self.mesh, x, self.app, p)
             pnorm = self.solver.norm_X(self.mesh, p)
             if iter_mesh == 0:
-                self.printer_mesh.print_names()
-            self.printer_mesh.update(it=iter_mesh, zeta=result.zeta_global,
+                self.logger_mesh.print_names()
+            self.logger_mesh.update(it=iter_mesh, zeta=result.zeta_global,
                                      N=len(self.mesh), eta=result.eta_global,
                                      mer=result.eta_global+self.beta*resn, mu=result.mu_global)
-            self.printer_mesh.values['|p|'] = pnorm
-            self.printer_mesh.print()
+            self.logger_mesh.values['|p|'] = pnorm
+            self.logger_mesh.print()
             zetaquit = aimed/(1.0 +1.0/self.C0*pnorm)
             zetaquit = aimed*min(1.0, self.C0*pnorm)
             # print(f"\t  {info.iter} \t {iter_mesh} \t {aimed} \t {result.eta_global} \t {result.zeta_global}\t {len(self.mesh)}\t {pnorm}")
-            if result.zeta_global <= zetaquit or result.eta_global<info.tol_aimed:
-                self.printer_newton.update(N=len(self.mesh), meshiter=iter_mesh)
-                return SimpleNamespace(update=p, update_norm=pnorm, x=x, success=True)
+            if result.zeta_global <= zetaquit or result.eta_global<iterdata.tol_aimed:
+                self.logger_newton.update(N=len(self.mesh), meshiter=iter_mesh)
+                meritgrad = self.computeMeritGrad(x, p, state.meritvalue)
+                return SimpleNamespace(dx=p, dx_norm=pnorm, meritgrad=meritgrad, x=x, success=True)
             mesh_new, refinfo = mesh1d.adapt_mesh(self.mesh, result.zeta_cell, theta=self.theta)
             xnew = self.solver.interpolate(x, mesh_new, refinfo)
             x = xnew
             self.mesh = mesh_new
-        return SimpleNamespace(update=p, update_norm=pnorm, x=x, success=False)
+        meritgrad = self.computeMeritGrad(x, p, state.meritvalue)
+        return SimpleNamespace(dx=p, dx_norm=pnorm, meritgrad=meritgrad, x=x, success=False)
 
-    def call_back(self, **kwargs):
-        x = kwargs["x"]
-        iterdata = kwargs["iterdata"]
+    def call_back(self, iterdata, accepted):
+        x = accepted.x
         plot_all(mesh=self.mesh, app=self.app, x=x, solver=self.solver,
-                 title=f"{self.app.name} Iter {iterdata.iter}")
-
-    def call_back_backtrack_failed(self, **kwargs):
-        btresult = kwargs['btresult']
-        dx = kwargs['dx']
-        r = kwargs['r']
-        if not btresult.success:
-            print(f"{btresult.step=}")
-        else:
-            print(f"{kwargs['dxnorm']=} {kwargs['dxnorm_old']=}")
-    def plot(self, x):
-        pass
-        # print(f"{x.shape=} {self.mesh.shape=}")
+                 title=f"{self.app.name} =={accepted.success}== Iter {iterdata.iter}")
 
 
 
@@ -274,19 +252,19 @@ if __name__ == "__main__":
         # app = ode_examples.ExponentialJordan(lam=2.2)
         # app = ode_examples.Logistic()
         # app = ode_examples.Pendulum(t_end=13)
-        app = ode_examples.DoublePendulum(t_end=25)
-        # app = ode_examples.VanDerPol(t_end=40.0)
+        # app = ode_examples.DoublePendulum(t_end=20)
+        app = ode_examples.VanDerPol(t_end=40.0)
         # app = ode_examples.Robertson(t_end=1.0)
         # app = ode_examples.Lorenz(t_end=25)
         # app = ode_examples.NonlinearMix()
         # app = ode_examples.Mathieu()
         # app = ode_examples.BlowUp(t_end=0.999)
-        sdata = newtondata.StoppingParamaters(maxiter=500, rtol=1e-6, bt_maxiter=30, bt_c=0.01, bt_omega=0.5, divx=1e20)
+        sdata = newtondata.StoppingParamaters(maxiter=30, rtol=1e-6, divx=1e20)
         solver = Newton_Ode(app, k=2, n0=500)
         # solver = Newton_Ode(app, k=1, n0=500)
         x0 = solver.initial_guess()
-        newton = newton.Newton(nd = solver, verbose=2, sdata=sdata, verbose_bt=False)
-        xs, info, printer = newton.solve(x0)
-        printer.print_history()
+        newton = newton.Newton(nd = solver, verbose=2, sdata=sdata, verbose_bt=False, maxiter_bt=30, c_bt=0.01, omega_bt=0.5)
+        xs, info, logger = newton.solve(x0)
+        logger.print_history()
 
 

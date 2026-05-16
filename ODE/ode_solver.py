@@ -408,7 +408,7 @@ def plot_dg(self, mesh, ucoeff, kwargs={}):
 
 #------------------------------------------------------------------
 if __name__ == "__main__":
-    from Utility import mesh1d, plotting, printer
+    from Utility import mesh1d, plotting, logger
     import ode_examples
     import matplotlib.pyplot as plt
     import time
@@ -418,7 +418,7 @@ if __name__ == "__main__":
         n = n0
         ns, errs_l2, errs_disc, etas = [], [], [], []
         types = {'n': 'i', 'solve': 'f', 'err': 'e', 'est': 'e', 'eff': 'f', 't_err': 'e', 't_est': 'e'}
-        pr = printer.Printer(types=types, name="Toto")
+        pr = printer.Logger(types=types, name="Toto")
         pr.print_names()
         # ncomp = app.ncomp
         for it in range(niter):
