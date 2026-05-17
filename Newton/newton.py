@@ -61,9 +61,9 @@ class Newton:
         if getattr(self.sdata, 'addname', None):
             self.name += "_" + self.sdata.addname
         types = {
-            "it": "i", "mer": "e", "rhomer": "f",
+            "type": "s", "it": "i", "mer": "e", "rhomer": "f",
             "|dx|": "e", "rhodx": "f",
-            "lin": "i", "|x|": "e", "type": "s",
+            "lin": "i", "|x|": "e",
         }
         types.update(getattr(self.globalization, "log_types", {}))
         self.logger = Utility.logger.Logger(verbose=self.verbose, types=types, name=self.name)
@@ -85,9 +85,23 @@ class Newton:
             "type": getattr(step, "step_type", "?"),
         }
 
+        # ratios w.r.t. previous accepted state
+        old_merit = getattr(self.iterdata, "meritvalue_old", None)
+        old_dx = getattr(self.iterdata, "dx_norm_old", None)
+
+        if old_merit is not None and old_merit > 0:
+            vals["rhomer"] = state.meritvalue / old_merit
+        else:
+            vals["rhomer"] = np.nan
+
         if step is not None:
             vals["|dx|"] = step.dx_norm
             vals["lin"] = getattr(step, "liniter", 0)
+
+            if old_dx is not None and old_dx > 0:
+                vals["rhodx"] = step.dx_norm / old_dx
+            else:
+                vals["rhodx"] = np.nan
 
         if accepted is not None:
             for key, typ in getattr(self.globalization, "log_types", {}).items():
@@ -100,6 +114,34 @@ class Newton:
 
         self.logger.update(**vals)
         self.logger.print()
+
+        # store for next iteration
+        self.iterdata.meritvalue_old = state.meritvalue
+        if step is not None:
+            self.iterdata.dx_norm_old = step.dx_norm
+    # def log_iteration(self, it, state, step=None, accepted=None):
+    #     vals = {
+    #         "it": it,
+    #         "mer": state.meritvalue,
+    #         "|x|": state.norm_X,
+    #         "type": getattr(step, "step_type", "?"),
+    #     }
+    #
+    #     if step is not None:
+    #         vals["|dx|"] = step.dx_norm
+    #         vals["lin"] = getattr(step, "liniter", 0)
+    #
+    #     if accepted is not None:
+    #         for key, typ in getattr(self.globalization, "log_types", {}).items():
+    #             if hasattr(accepted, key):
+    #                 vals[key] = getattr(accepted, key)
+    #             elif typ == "i":
+    #                 vals[key] = 0
+    #             else:
+    #                 vals[key] = np.nan
+    #
+    #     self.logger.update(**vals)
+    #     self.logger.print()
     # ----------------------------------------------------------------------
     def acceptable_step(self, state, step, accepted):
         if not accepted.success:
@@ -115,12 +157,12 @@ class Newton:
         return True
 
     # ----------------------------------------------------------------------
-    def build_step(self, x, state, request=None):
+    def build_step(self, x, state, info, request=None):
         if request is None:
             request = SimpleNamespace(step_type="newton", lambda_reg=0.0)
 
         if request.step_type == "newton":
-            step = self.nd.compute_newton_step(x, state, self.iterdata)
+            step = self.nd.compute_newton_step(x, state, info)
             if not hasattr(step, "x"):
                 step.x = x
             step.step_type = "newton"
@@ -128,7 +170,7 @@ class Newton:
 
         if request.step_type == "regularized_newton":
             step = self.nd.compute_regularized_newton_step(
-                x, state, self.iterdata, lambda_reg=request.lambda_reg
+                x, state, info, lambda_reg=request.lambda_reg
             )
             if not hasattr(step, "x"):
                 step.x = x
@@ -137,44 +179,21 @@ class Newton:
             return step
 
         if request.step_type == "gradient":
-            step = self.nd.compute_gradient_step(x, state, self.iterdata)
+            step = self.nd.compute_gradient_step(x, state, info)
             if not hasattr(step, "x"):
                 step.x = x
             step.step_type = "gradient"
             return step
 
         raise ValueError(f"unknown step_type {request.step_type}")
-    # def build_step(self, x, state, request=None):
-    #     if request is None:
-    #         request = SimpleNamespace(step_type="newton", lambda_reg=0.0)
-    #
-    #     if request.step_type == "newton":
-    #         step = self.nd.compute_newton_step(x, state, self.iterdata)
-    #         step.step_type = "newton"
-    #         return step
-    #
-    #     if request.step_type == "regularized_newton":
-    #         step = self.nd.compute_regularized_newton_step(
-    #             x, state, self.iterdata, lambda_reg=request.lambda_reg
-    #         )
-    #         step.step_type = "reg-newt"
-    #         step.lambda_reg = request.lambda_reg
-    #         return step
-    #
-    #     if request.step_type == "gradient":
-    #         step = self.nd.compute_gradient_step(x, state, self.iterdata)
-    #         step.step_type = "gradient"
-    #         return step
-    #
-    #     raise ValueError(f"unknown step_type {request.step_type}")
     # ----------------------------------------------------------------------
-    def compute_step(self, x, state):
+    def compute_step(self, x, state, info):
         tol = max(self.sdata.atol, self.sdata.rtol * state.meritvalue)
 
         self.iterdata.tol_aimed = tol
         self.iterdata.tol_missing = tol / max(state.meritvalue, 1e-300)
 
-        step0 = self.build_step(x, state)
+        step0 = self.build_step(x, state, info)
 
         accepted = self.globalization.accept(
             state=state, step=step0, solver=self, info=self.iterdata
@@ -187,7 +206,7 @@ class Newton:
 
         if hasattr(self.nd, "compute_gradient_step"):
             step = self.build_step(
-                x, state,
+                x, state, info=info,
                 request=SimpleNamespace(step_type="gradient")
             )
             accepted = self.globalization.accept(
@@ -200,6 +219,8 @@ class Newton:
     def solve(self, x):
         state = self.nd.evaluate(x)
         self.iterdata.reset(state.meritvalue)
+        self.iterdata.meritvalue_old = state.meritvalue
+        self.iterdata.dx_norm_old = None
         tol = max(self.sdata.atol, self.sdata.rtol * state.meritvalue)
         toldx = max(self.sdata.atoldx, self.sdata.rtoldx * state.norm_X)
         self.logger.print_names()
@@ -211,20 +232,25 @@ class Newton:
                 self.iterdata.failure = None
                 return x, self.iterdata, self.logger
 
-            step, accepted = self.compute_step(x, state)
+            info = SimpleNamespace(
+                it=it,
+                tol=tol,
+            )
+
+            step, accepted = self.compute_step(x, state, info)
 
             if hasattr(self.nd, "call_back"):
                 self.nd.call_back(self.iterdata, accepted)
 
             if not accepted.success:
-                return self.fail(x, "globalization failed", accepted)
+                return self.fail(x, f"globalization failed", accepted)
 
             x = accepted.x
             state = accepted.state
 
             self.log_iteration(it, state, step, accepted)
 
-        return self.fail(x, "maxiter exceeded", accepted)
+        return self.fail(x, f"maxiter exceeded", accepted)
 
 # ------------------------------------------------------ #
 

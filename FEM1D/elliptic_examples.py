@@ -45,8 +45,8 @@ class EllipticExample:
     def diffusion_coef_x(self, x):
         return np.zeros_like(x)
 
-    def convection_coef(self, x):
-        return np.zeros_like(x)
+    # def convection_coef(self, x):
+    #     return np.zeros_like(x)
 
 #-------------------------------------------------------------
 class Poisson(EllipticExample):
@@ -243,40 +243,50 @@ class InteriorLayerVariableAlpha(EllipticExample):
         return -ax[..., None] * self.dsolution(x) - a[..., None] * self.ddsolution(x)
 
 # -------------------------------------------------------------
-class LinearSystem3(EllipticExample):
-    def __init__(self):
+class ExampleSystem(EllipticExample):
+    def __init__(self, rho=1):
+        self.rho = rho
         super().__init__(0, 1, uL=self.solution(0.0), uR=self.solution(1.0))
 
     def solution(self, x):
         return np.stack([
-            1.0 + x + np.sin(np.pi*x),
-            -1.0 + 2.0*x + x*(1.0-x),
-            0.5 - x + np.sin(2*np.pi*x),
+            1.0 + 2.0 * x + 0.30 * np.sin(2 * np.pi * x),
+            -1.0 + 0.5 * x + 0.20 * np.sin(3 * np.pi * x),
+            2.0 - x + 0.15 * np.sin(5 * np.pi * x),
         ], axis=-1)
 
     def dsolution(self, x):
         return np.stack([
-            1.0 + np.pi*np.cos(np.pi*x),
-            2.0 + 1.0 - 2.0*x,
-            -1.0 + 2.0*np.pi*np.cos(2*np.pi*x),
+            2.0 + 0.60 * np.pi * np.cos(2 * np.pi * x),
+            0.5 + 0.60 * np.pi * np.cos(3 * np.pi * x),
+            -1.0 + 0.75 * np.pi * np.cos(5 * np.pi * x),
         ], axis=-1)
 
     def ddsolution(self, x):
         return np.stack([
-            -np.pi**2*np.sin(np.pi*x),
-            -2.0*np.ones_like(x),
-            -4.0*np.pi**2*np.sin(2*np.pi*x),
+            -1.20 * np.pi ** 2 * np.sin(2 * np.pi * x),
+            -1.80 * np.pi ** 2 * np.sin(3 * np.pi * x),
+            -3.75 * np.pi ** 2 * np.sin(5 * np.pi * x),
         ], axis=-1)
-
     def diffusion_coef(self, x):
         return np.array([
             [1.0, 0.15, 0.0],
             [0.15, 2.0, 0.20],
             [0.0, 0.20, 3.0],
         ])
+    def nonlinearity(self, u):
+        norm2 = np.sum(u * u, axis=-1)
+        return self.rho*norm2[..., None] * u
 
-    def convection_coef(self, x):
-        return np.zeros((3, 3))
+    def dnonlinearity(self, u):
+        ncomp = u.shape[-1]
+        norm2 = np.sum(u * u, axis=-1)
+
+        I = np.eye(ncomp)
+        return self.rho*(
+                norm2[..., None, None] * I
+                + 2.0 * u[..., :, None] * u[..., None, :]
+        )
 
     def R(self):
         return np.array([
@@ -286,16 +296,142 @@ class LinearSystem3(EllipticExample):
         ])
 
     def df_du(self, x, u):
-        R = self.R()
-        return np.broadcast_to(R, (*x.shape, 3, 3))
+        return -self.R() - self.dnonlinearity(u)
 
     def f(self, x, u):
+        uex = self.solution(x)
         d2uex = self.ddsolution(x)
         A = self.diffusion_coef(x)
         R = self.R()
-
-        return (
-                -np.einsum("ab,...b->...a", A, d2uex)
-                - np.einsum("ab,...b->...a", R, self.solution(x))
-                + np.einsum("ab,...b->...a", R, u)
+        g = (
+            -np.einsum("ab,...b->...a", A, d2uex)
+            + np.einsum("ab,...b->...a", R, uex)
+            + self.nonlinearity(uex)
         )
+        return g - np.einsum("ab,...b->...a", R, u) - self.nonlinearity(u)
+
+# -------------------------------------------------------------
+class PotentialReactionSystem(EllipticExample):
+    def __init__(self, rho=100.0):
+        self.rho = rho
+        super().__init__(
+            0, 1,
+            uL=np.array([1.0, -1.0, 2.0]),
+            uR=np.array([3.0, -0.5, 1.0]),
+        )
+        lamA = np.linalg.eigvalsh(self.diffusion_coef(0.5))[0]
+        lamR = np.linalg.eigvalsh(self.R())[0]
+        print(lamA + lamR / np.pi ** 2)
+        self.name = "PotentialReactionSystem3"
+
+    def diffusion_coef(self, x):
+        return np.array([
+            [0.025, 0.006, 0.01],
+            [0.006, 0.035, 0.008],
+            [0.01, 0.008, 0.030],
+        ])
+
+    def R(self):
+        return np.array([
+            [0.15, 0.12, 0.0],
+            [0.12, 0.1, 0.1],
+            [0.0, 0.1, 0.2],
+        ])
+
+    def u0(self, x):
+        return np.stack([
+            0.5 * np.sin(np.pi * x),
+            0.25 * np.cos(2 * np.pi * x),
+            -0.3 * np.sin(3 * np.pi * x),
+        ], axis=-1)
+
+    def source(self, x):
+        return np.stack([
+            8.0 * np.sin(np.pi * x),
+            4.0 * np.sin(2 * np.pi * x),
+            3.0 * np.cos(np.pi * x),
+        ], axis=-1)
+
+    # def Pmat(self):
+    #     return np.array([
+    #         [0.0, 0.0, 1.0],
+    #         [0.0, 1.0, 0.0],
+    #         [1.0, 0.0, 0.0],
+    #     ])
+
+    # def Pmat(self):
+    #     return np.array([
+    #         [1.0, -0.6, -0.4],
+    #         [-0.6, 1.0, -0.2],
+    #         [-0.4, -0.2, 1.0],
+    #     ])
+    def smooth_step(self, x, x0=0.5, eps=0.00001):
+        return 0.5 * (1.0 + np.tanh((x - x0) / eps))
+    def Pmat_left(self):
+        # penalizes u1 - u3
+        return np.array([
+            [1.0, 0.0, -1.0],
+            [0.0, 0.0, 0.0],
+            [-1.0, 0.0, 1.0],
+        ])
+
+    def Pmat_right(self):
+        # penalizes u1 - u2
+        return np.array([
+            [1.0, -1.0, 0.0],
+            [-1.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ])
+
+    def Pmat(self, x):
+        s = self.smooth_step(x)[..., None, None]
+        return (1.0 - s) * self.Pmat_left() + s * self.Pmat_right()
+
+    def potential_reaction(self, x, u):
+        B = self.Pmat(x)
+        z = np.einsum("...ab,...b->...a", B, u)
+        z2 = np.sum(z * z, axis=-1)
+        return self.rho * np.einsum("...ba,...b->...a", B, z2[..., None] * z)
+
+    def dpotential_reaction(self, x, u):
+        B = self.Pmat(x)
+        z = np.einsum("...ab,...b->...a", B, u)
+        z2 = np.sum(z * z, axis=-1)
+        I = np.eye(3)
+
+        Dz = self.rho * (
+                z2[..., None, None] * I
+                + 2.0 * z[..., :, None] * z[..., None, :]
+        )
+
+        return np.einsum("...ba,...bc,...cd->...ad", B, Dz, B)
+    # def potential_reaction(self, x, u):
+    #     P = self.Pmat(x)
+    #     B = np.eye(3) - P
+    #     z = np.einsum("ab,...b->...a", B, u)
+    #     z2 = np.sum(z * z, axis=-1)
+    #     return self.rho * np.einsum("ab,...b->...a", B, z2[..., None] * z)
+    #
+    # def dpotential_reaction(self, x, u):
+    #     P = self.Pmat()
+    #     B = np.eye(3) - P
+    #     z = np.einsum("ab,...b->...a", B, u)
+    #     z2 = np.sum(z * z, axis=-1)
+    #     I = np.eye(3)
+    #
+    #     Dz_force_in_z = self.rho * (
+    #             z2[..., None, None] * I
+    #             + 2.0 * z[..., :, None] * z[..., None, :]
+    #     )
+    #
+    #     return np.einsum("ab,...bc,cd->...ad", B, Dz_force_in_z, B)
+
+    def f(self, x, u):
+        return (
+                self.source(x)
+                - np.einsum("ab,...b->...a", self.R(), u)
+                - self.potential_reaction(x, u)
+        )
+
+    def df_du(self, x, u):
+        return -self.R() - self.dpotential_reaction(x, u)

@@ -60,7 +60,24 @@ def plot_solutions(plot_dicts, title=None):
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 
 #==================================================================
-def plot_error_curves(plot_dicts):
+def compress_repeated_x(x, y, mode="last", ignore_first=0):
+    x = np.asarray(x)[ignore_first:]
+    y = np.asarray(y)[ignore_first:]
+
+    xu = np.unique(x)
+    yu = np.empty_like(xu, dtype=float)
+
+    for i, xx in enumerate(xu):
+        idx = np.where(x == xx)[0]
+        if mode == "last":
+            yu[i] = y[idx[-1]]
+        elif mode == "min":
+            yu[i] = np.min(y[idx])
+        else:
+            raise ValueError(f"unknown mode {mode}")
+
+    return xu, yu
+def plot_error_curves(plot_dicts, rate_ignore=0, fixed_order=None):
     import copy
     plot_dicts = copy.deepcopy(plot_dicts)
     for k,v in list(plot_dicts.items()):
@@ -77,12 +94,14 @@ def plot_error_curves(plot_dicts):
             if not single_ns:
                 nsp = ns[count]
             count += 1
+            xfit, yfit = compress_repeated_x(nsp, errs, mode="last", ignore_first=rate_ignore)
             try:
-                a,b = np.polyfit(np.log(nsp), np.log(errs), 1)
+                a, b = np.polyfit(np.log(xfit), np.log(yfit), 1)
             except Exception as e:
                 raise KeyError(f"problem in key {k2} {len(errs)=} {len(nsp)=}") from e
-            kslope = k2+f" {np.fabs(a):6.2f}"
-            plot_dicts[k]['y'][kslope] = np.exp(b)*nsp**a
+            if fixed_order is not None: a = -float(fixed_order)
+            kslope = k2 + f" {np.fabs(a):6.2f}"
+            plot_dicts[k]['y'][kslope] = np.exp(b) * nsp ** a
             plot_dicts[k]['kwargs'][k2] = {'ls': '--', 'marker': 'o'}
             plot_dicts[k]['kwargs'][kslope] = {'ls': ':', 'color': 'k'}
     # print(f"{plot_dicts=}")

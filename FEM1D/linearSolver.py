@@ -23,7 +23,7 @@ class CondensedLinearSolver:
         g = fh.p1.copy()
 
         if Alocal is None or nb_tot == 0:
-            return SimpleNamespace(A=Aglob.tocsc(), b=g, bubble_solver_data=None)
+            return SimpleNamespace(A=Aglob.tocsr(), b=g, bubble_solver_data=None)
 
         Apb = Alocal.Apb
         Abp = Alocal.Abp
@@ -57,7 +57,7 @@ class CondensedLinearSolver:
             shape=Aglob.shape,
         )
 
-        A = (Aglob + Slocal).tocsc()
+        A = (Aglob + Slocal).tocsr()
 
         bubble_solver_data = SimpleNamespace(
             X_abp=X_abp,
@@ -92,7 +92,6 @@ class CondensedLinearSolver:
         if Ah.local is None or fh.bubbles.shape[1] == 0:
             with self.timer("global_solve"):
                 p1 = self.solve_global(Ah.global_p1, fh.p1)
-
             return SimpleNamespace(
                 p1=p1,
                 bubbles=np.zeros_like(fh.bubbles),

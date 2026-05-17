@@ -1,7 +1,8 @@
 class Logger:
-    def __init__(self, types, name='My nice iteration', verbose=True, history=True):
+    def __init__(self, types, name='My nice iteration', verbose=True, history=True, print_name=False):
         self.name = name
         self.verbose = verbose
+        self.print_name = print_name
         self.lengths = {}
         self.formats = {}
         self.values = {}
@@ -42,7 +43,7 @@ class Logger:
                 raise KeyError(f"Unknown printer key: {k}")
     def header(self):
         if not self.verbose: return
-        f = ' '*(len(self.name)+2)
+        f = ' '*(len(self.name)+2) if self.print_name else ''
         for k, v in self.lengths.items():
             f += f"{k:>{v}}"
         n = len(f)
@@ -52,8 +53,11 @@ class Logger:
 
     def print(self):
         if not self.verbose: return
-        width = len(self.name) + 2
-        row = f"{self.name:{width}}"
+        if self.print_name:
+            width = len(self.name) + 2
+            row = f"{self.name:{width}}"
+        else:
+            width, row = 0, f""
         for k, fmt in self.formats.items():
             row += fmt.format(self.values[k])
         if hasattr(self, 'history'):

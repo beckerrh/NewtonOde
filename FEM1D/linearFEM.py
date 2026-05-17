@@ -310,7 +310,7 @@ class LinearElliptic:
             Alocal.Abp[:, :, :] = A[:, ib, :][:, :, iv]
             Alocal.Abb[:, :, :] = A[:, ib, :][:, :, ib]
 
-        Ah = SimpleNamespace(local=Alocal, global_p1=Aglob.tocsc())
+        Ah = SimpleNamespace(local=Alocal, global_p1=Aglob.tocsr())
         return self.dirichlet_matrix(mesh, Ah)
     # -------------------------------------------------------------
     def make_diffusion_local_scalar(self, mesh):
@@ -365,23 +365,23 @@ class LinearElliptic:
         dx = mesh[1:] - mesh[:-1]
         Aref = np.einsum("iq,jq,q->ij", integ.dphi, integ.dphi, integ.w)
         return np.einsum("e,ij->eij", 1.0 / dx, Aref)
-    def matrix_p1_fast(self, mesh):
-        nx, ncomp = mesh.shape[0], self.app.ncomp
-        h = mesh[1:] - mesh[:-1]
-        main = np.zeros(nx)
-        off = np.zeros(nx - 1)
-        main[:-1] += 1.0 / h
-        main[1:] += 1.0 / h
-        off[:] = -1.0 / h
-        A1 = sparse.diags(
-            diagonals=[off, main, off],
-            offsets=[-1, 0, 1],
-            shape=(nx, nx),
-            format="csc"
-        )
-        if ncomp == 1:
-            return A1
-        return sparse.kron(A1, sparse.eye(ncomp, format="csc"), format="csc")
+    # def matrix_p1_fast(self, mesh):
+    #     nx, ncomp = mesh.shape[0], self.app.ncomp
+    #     h = mesh[1:] - mesh[:-1]
+    #     main = np.zeros(nx)
+    #     off = np.zeros(nx - 1)
+    #     main[:-1] += 1.0 / h
+    #     main[1:] += 1.0 / h
+    #     off[:] = -1.0 / h
+    #     A1 = sparse.diags(
+    #         diagonals=[off, main, off],
+    #         offsets=[-1, 0, 1],
+    #         shape=(nx, nx),
+    #         format="csc"
+    #     )
+    #     if ncomp == 1:
+    #         return A1
+    #     return sparse.kron(A1, sparse.eye(ncomp, format="csc"), format="csc")
     # -------------------------------------------------------------
     def normH1(self, mesh, uh):
         integ = self.integration['coeff']
@@ -419,7 +419,7 @@ class LinearElliptic:
         eH1 = np.einsum('iqc, i, q -> ', (du_dx - du_ex)**2, dx, integ.w)
         return np.sqrt(eL2), np.sqrt(eH1)
     # -------------------------------------------------------------
-    def compute_estimator(self, mesh, uh, ph):
+    def compute_estimator_linearized(self, mesh, uh, ph):
         ne, k, ncomp = mesh.shape[0] - 1, self.korder, self.app.ncomp
         integ = self.integration['error']
         xm, dx = mesh[:-1],  (mesh[1:] - mesh[:-1])
@@ -453,8 +453,8 @@ class LinearElliptic:
                 + self.apply_coefficient(alpha_x, dup_dx)
                 + Jp
         )
-        beta = self.normalize_coefficient(self.app.convection_coef(x_rhs), x_rhs)
-        res -= self.apply_coefficient(beta, dup_dx)
+        # beta = self.normalize_coefficient(self.app.convection_coef(x_rhs), x_rhs)
+        # res -= self.apply_coefficient(beta, dup_dx)
         if k>=2:
             # Build projection basis once, e.g. Bernstein degree k-2
             psi = bernstein.bernstein_basis(k - 2, integ.xi)  # (k-1, nq)
@@ -495,8 +495,8 @@ class LinearElliptic:
                 + self.apply_coefficient(alpha, d2u_dx2)
                 + self.apply_coefficient(alpha_x, du_dx)
         )
-        beta = self.normalize_coefficient(self.app.convection_coef(x_rhs), x_rhs)
-        res -= self.apply_coefficient(beta, du_dx)
+        # beta = self.normalize_coefficient(self.app.convection_coef(x_rhs), x_rhs)
+        # res -= self.apply_coefficient(beta, du_dx)
         if k>=2:
             # Build projection basis once, e.g. Bernstein degree k-2
             psi = bernstein.bernstein_basis(k - 2, integ.xi)  # (k-1, nq)
@@ -542,16 +542,18 @@ class LinearElliptic:
             integ.w, Adu, integ.dphi
         )
         # res_loc = rhs_f - rhs_Au
-        beta = self.normalize_coefficient(app.convection_coef(xq), xq)
-        Bdu = self.apply_coefficient(beta, du_dx)
+        # beta = self.normalize_coefficient(app.convection_coef(xq), xq)
+        # Bdu = self.apply_coefficient(beta, du_dx)
+        #
+        # rhs_Bu = np.einsum(
+        #     "i,q,iqc,jq->ijc",
+        #     dx, integ.w, Bdu, integ.phi,
+        #     optimize=True,
+        # )
+        #
+        # res_loc = rhs_f - rhs_Au - rhs_Bu
 
-        rhs_Bu = np.einsum(
-            "i,q,iqc,jq->ijc",
-            dx, integ.w, Bdu, integ.phi,
-            optimize=True,
-        )
-
-        res_loc = rhs_f - rhs_Au - rhs_Bu
+        res_loc = rhs_f - rhs_Au
 
         res = self.make_fe_vector(mesh)
         res.p1[:-1, :] += res_loc[:, 0, :]
@@ -584,28 +586,6 @@ class LinearElliptic:
             rhs.bubbles[:, :, :] = rhs_loc[:, 1:k, :]
         # rhs.rhs_loc = rhs_loc
         return rhs
-    # -------------------------------------------------------------
-    # def make_reaction_local_system(self, mesh, uh):
-    #     integ = self.integration["coeff"]
-    #     ne, k, ncomp = mesh.shape[0] - 1, self.korder, self.app.ncomp
-    #
-    #     dx = mesh[1:] - mesh[:-1]
-    #     xm = mesh[:-1]
-    #     xq = xm[:, None] + dx[:, None] * integ.xi[None, :]
-    #
-    #     uloc = self.local_coeffs(mesh, uh)
-    #     u_vals = np.einsum("eic,iq->eqc", uloc, integ.phi)
-    #
-    #     J = self.app.df_du(xq, u_vals)
-    #     J = self.normalize_jacobian(J, xq, u_vals)
-    #
-    #     # local[e, i, a, j, b] = ∫ J_ab phi_i phi_j
-    #     R = np.einsum(
-    #         "eqab,iq,jq,q,e->eiajb",
-    #         J, integ.phi, integ.phi, integ.w, dx,
-    #         optimize=True,
-    #     )
-    #     return R.reshape(ne, (k + 1) * ncomp, (k + 1) * ncomp)
     def assemble_p1_global_fast(self, mesh, App):
         ncomp = self.app.ncomp
         nx = mesh.shape[0]
@@ -628,11 +608,125 @@ class LinearElliptic:
 
         A = sparse.coo_matrix(
             (App.ravel(), (rows.ravel(), cols.ravel())),
-            shape=(nx * ncomp, nx * ncomp),
-        ).tocsc()
+            shape=(nx * ncomp, nx * ncomp))
 
-        return A
+        return A.tocsr()
+
+    def matrix_p1_tangent_fast(self, mesh, uh=None):
+        app = self.app
+        ncomp = app.ncomp
+        nx = mesh.shape[0]
+        ne = nx - 1
+
+        integ = self.integration["coeff"]
+        xi, w = integ.xi, integ.w
+
+        h = mesh[1:] - mesh[:-1]
+        x0 = mesh[:-1]
+        xq = x0[:, None] + h[:, None] * xi[None, :]
+
+        # P1 basis on reference element
+        phi = np.vstack((1.0 - xi, xi))  # (2,nq)
+        dphi = np.array([[-1.0] * len(xi),
+                         [1.0] * len(xi)])  # (2,nq)
+
+        ndloc = 2 * ncomp
+        App = np.zeros((ne, ndloc, ndloc))
+
+        # ------------------------------------------------------------
+        # diffusion: int alpha u' v'
+        # ------------------------------------------------------------
+        Acoef = self.normalize_coefficient(app.diffusion_coef(xq), xq)
+
+        if Acoef.ndim == xq.ndim:
+            # scalar alpha
+            A_s = np.einsum(
+                "eq,aq,bq,q,e->eab",
+                Acoef, dphi, dphi, w, 1.0 / h,
+                optimize=True,
+            )
+            App += np.einsum(
+                "eab,cd->eacbd",
+                A_s, np.eye(ncomp),
+                optimize=True,
+            ).reshape(ne, ndloc, ndloc)
+        else:
+            # matrix alpha
+            if Acoef.ndim == 2:
+                Acoef = np.broadcast_to(Acoef, xq.shape + Acoef.shape)
+
+            A = np.einsum(
+                "eqcd,aq,bq,q,e->eacbd",
+                Acoef, dphi, dphi, w, 1.0 / h,
+                optimize=True,
+            )
+            App += A.reshape(ne, ndloc, ndloc)
+
+        # ------------------------------------------------------------
+        # convection: int beta u' v
+        # no h factor: dx cancels derivative 1/h
+        # ------------------------------------------------------------
+        Bcoef = self.normalize_coefficient(app.convection_coef(xq), xq)
+
+        if np.any(Bcoef != 0):
+            if Bcoef.ndim == xq.ndim:
+                B_s = np.einsum(
+                    "eq,aq,bq,q->eab",
+                    Bcoef, phi, dphi, w,
+                    optimize=True,
+                )
+                App += np.einsum(
+                    "eab,cd->eacbd",
+                    B_s, np.eye(ncomp),
+                    optimize=True,
+                ).reshape(ne, ndloc, ndloc)
+            else:
+                if Bcoef.ndim == 2:
+                    Bcoef = np.broadcast_to(Bcoef, xq.shape + Bcoef.shape)
+
+                B = np.einsum(
+                    "eqcd,aq,bq,q->eacbd",
+                    Bcoef, phi, dphi, w,
+                    optimize=True,
+                )
+                App += B.reshape(ne, ndloc, ndloc)
+
+        # ------------------------------------------------------------
+        # tangent reaction: - int df_du(x,u) p v
+        # ------------------------------------------------------------
+        if uh is not None:
+            uL = uh.p1[:-1, :]
+            uR = uh.p1[1:, :]
+            u_vals = (
+                    phi[0][None, :, None] * uL[:, None, :]
+                    + phi[1][None, :, None] * uR[:, None, :]
+            )
+
+            J = app.df_du(xq, u_vals)
+            J = self.normalize_jacobian(J, xq, u_vals)
+
+            C = np.einsum(
+                "eqcd,aq,bq,q,e->eacbd",
+                J, phi, phi, w, h,
+                optimize=True,
+            )
+            App -= C.reshape(ne, ndloc, ndloc)
+
+        # left boundary row: element 0, local left node
+        App[0, 0:ncomp, :] = 0.0
+        for c in range(ncomp):
+            App[0, c, c] = 1.0
+
+        # right boundary row: last element, local right node
+        r0 = ncomp
+        App[-1, r0:r0 + ncomp, :] = 0.0
+        for c in range(ncomp):
+            App[-1, r0 + c, r0 + c] = 1.0
+        Aglob = self.assemble_p1_global_fast(mesh, App)
+        return SimpleNamespace(local=None, global_p1=Aglob)
     def matrix(self, mesh, uh=None):
+        # if self.korder == 1:
+        #     return self.matrix_p1_tangent_fast(mesh, uh)
         app = self.app
         k = self.korder
         ncomp = app.ncomp
@@ -672,43 +766,43 @@ class LinearElliptic:
         # Convection part
         # term: int beta u' v
         # ------------------------------------------------------------
-        Bcoef = self.normalize_coefficient(app.convection_coef(xq), xq)
-        if np.any(Bcoef != 0):
-            if Bcoef.ndim == xq.ndim:
-                # scalar convection coefficient
-                B_s = np.einsum(
-                    "eq,iq,jq,q,e->eij",
-                    Bcoef,
-                    integ.phi,  # test
-                    integ.dphi,  # trial derivative
-                    integ.w,
-                    np.ones_like(dx),
-                    optimize=True,
-                )
-
-                B = np.einsum(
-                    "eij,cd->eicjd",
-                    B_s,
-                    np.eye(ncomp),
-                    optimize=True,
-                )
-                B = B.reshape(ne, (k + 1) * ncomp, (k + 1) * ncomp)
-
-            else:
-                if Bcoef.ndim == 2:
-                    Bcoef = np.broadcast_to(Bcoef, xq.shape + Bcoef.shape)
-
-                B = np.einsum(
-                    "eqcd,iq,jq,q->eicjd",
-                    Bcoef,
-                    integ.phi,
-                    integ.dphi,
-                    integ.w,
-                    optimize=True,
-                )
-                B = B.reshape(ne, (k + 1) * ncomp, (k + 1) * ncomp)
-
-            Aloc += B
+        # Bcoef = self.normalize_coefficient(app.convection_coef(xq), xq)
+        # if np.any(Bcoef != 0):
+        #     if Bcoef.ndim == xq.ndim:
+        #         # scalar convection coefficient
+        #         B_s = np.einsum(
+        #             "eq,iq,jq,q,e->eij",
+        #             Bcoef,
+        #             integ.phi,  # test
+        #             integ.dphi,  # trial derivative
+        #             integ.w,
+        #             np.ones_like(dx),
+        #             optimize=True,
+        #         )
+        #
+        #         B = np.einsum(
+        #             "eij,cd->eicjd",
+        #             B_s,
+        #             np.eye(ncomp),
+        #             optimize=True,
+        #         )
+        #         B = B.reshape(ne, (k + 1) * ncomp, (k + 1) * ncomp)
+        #
+        #     else:
+        #         if Bcoef.ndim == 2:
+        #             Bcoef = np.broadcast_to(Bcoef, xq.shape + Bcoef.shape)
+        #
+        #         B = np.einsum(
+        #             "eqcd,iq,jq,q->eicjd",
+        #             Bcoef,
+        #             integ.phi,
+        #             integ.dphi,
+        #             integ.w,
+        #             optimize=True,
+        #         )
+        #         B = B.reshape(ne, (k + 1) * ncomp, (k + 1) * ncomp)
+        #
+        #     Aloc += B
 
         # tangent contribution: - df_du(u)
         if uh is not None:
@@ -749,23 +843,18 @@ class LinearElliptic:
             Alocal.Abp[:, :, :] = Aloc[:, bubble_ids[:, None], vertex_ids]
             Alocal.Abb[:, :, :] = Aloc[:, bubble_ids[:, None], bubble_ids]
 
-        return SimpleNamespace(local=Alocal, global_p1=Aglob.tocsc())
+        return SimpleNamespace(local=Alocal, global_p1=Aglob.tocsr())
     # -------------------------------------------------------------
     def dirichlet(self, mesh, uh):
-        # nx, k, ncomp = mesh.shape[0], self.korder, self.app.ncomp
         uh.p1[0, :] = self.app.uL
         uh.p1[-1, :] = self.app.uR
         return uh
     def dirichlet_zero(self, mesh, fh):
-        # nx, k, ncomp = mesh.shape[0], self.korder, self.app.ncomp
-        # bc = []
-        # for c in range(ncomp):
-        #     bc.append(c)
-        #     bc.append((nx - 1) * ncomp + c)
         fh.p1[0, :] = 0.0
         fh.p1[-1, :] = 0.0
         return fh
     def dirichlet_matrix(self, mesh, Ah):
+        # if self.korder == 1: return Ah
         nx, k, ncomp = mesh.shape[0], self.korder, self.app.ncomp
         Aglobal, Alocal = Ah.global_p1, Ah.local
         bc = []
@@ -777,11 +866,34 @@ class LinearElliptic:
             for c in range(ncomp):
                 Alocal.Apb[0, c, :] = 0.0
                 Alocal.Apb[-1, ncomp + c, :] = 0.0
-        A = Aglobal.tolil()
-        for i in bc:
-            A[i, :] = 0.0
-            A[i, i] = 1.0
-        return SimpleNamespace(local=Alocal, global_p1=A.tocsc())
+        # Dirichlet P1
+        # A = Aglobal.tolil()
+        # for i in bc:
+        #     A[i, :] = 0.0
+        #     A[i, i] = 1.0
+        # return SimpleNamespace(local=Alocal, global_p1=A.tocsc())
+        A = Aglobal
+        left = np.arange(ncomp)
+        right = np.arange((nx - 1) * ncomp, nx * ncomp)
+        bc = np.concatenate([left, right])
+        starts = A.indptr[bc]
+        ends = A.indptr[bc + 1]
+        for s, e in zip(starts, ends):
+            A.data[s:e] = 0.0
+        for i, s, e in zip(bc, starts, ends):
+            cols = A.indices[s:e]
+            j = np.searchsorted(cols, i)
+            A.data[s + j] = 1.0
+        # for node in [0, nx - 1]:
+        #     for c in range(ncomp):
+        #         i = node * ncomp + c
+        #         start, end = A.indptr[i], A.indptr[i + 1]
+        #         A.data[start:end] = 0.0
+        #         cols = A.indices[start:end]
+        #         j = np.searchsorted(cols, i)
+        #         assert j < len(cols) and cols[j] == i
+        #         A.data[start + j] = 1.0
+        return SimpleNamespace(local=Alocal, global_p1=A)
 
     # -------------------------------------------------------------
     def solve(self, mesh, uh=None):
@@ -790,6 +902,7 @@ class LinearElliptic:
         fh = self.rhs(mesh, uh)
         # fh = self.dirichlet_zero(mesh, fh)
         fh = self.dirichlet(mesh, fh)
+        return self.solve_linearized(mesh, uh, fh)
         Ah = self.matrix(mesh, uh)
         Ah = self.dirichlet_matrix(mesh, Ah)
         return self.linear_solver.solve(Ah, fh)
@@ -810,17 +923,16 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import time
 
-    def check_error(app, korder=2, niter=10, theta=0.5):
+    def check_error(solver, niter=10, theta=0.5):
         ns, errL2, errH1, etas, times = [], [], [], [], []
         mesh = mesh1d.mesh(app.x0, app.x1, n=10)
-        solver = LinearElliptic(korder=korder, app=app)
         uh = solver.make_fe_vector(mesh)
 
         for iter in range(niter):
             t0 = time.time()
             ph = solver.solve(mesh)
             eL2, eH1 = solver.compute_error(mesh, ph)
-            result = solver.compute_estimator(mesh, uh, ph)
+            result = solver.compute_estimator_linearized(mesh, uh, ph)
             eta, eta_sq = result.deta_global, result.deta
             ns.append(len(mesh)), errL2.append(eL2), errH1.append(eH1), etas.append(eta), times.append(time.time()-t0)
             plot_dict = {app.name: {}}
@@ -858,15 +970,19 @@ if __name__ == '__main__':
         print("L2 rates:", rates(ns, errL2))
         # pdict = {'x': ns, 'y': {'L2': errs_l2, 'disc': errs_disc, 'eta': etas}}
         pdict = {'x': ns, 'y': {'L2': errL2, 'H1': errH1, 'eta': etas}}
-        plot_dict = {f"Errors {app.name} k={korder}":  pdict}
+        plot_dict = {f"Errors {app.name} k={solver.korder}":  pdict}
         plotting.plot_error_curves(plot_dict)
         plt.show()
+
 
     # app = elliptic_examples.Poisson()
     # app = elliptic_examples.SmoothPoisson()
     # app = elliptic_examples.OscillatoryPoisson(omega=5, alpha=3.0)
     # app = elliptic_examples.DiscontinuousAlphaOscillator()
-    # app = elliptic_examples.InteriorLayerVariableAlpha()
-    app = elliptic_examples.LinearSystem3()
-    check_error(app, niter=21, korder=1)
+    app = elliptic_examples.InteriorLayerVariableAlpha()
+    # app = elliptic_examples.LinearSystem3()
+    solver = LinearElliptic(korder=1, app=app)
+    check_error(solver, niter=21)
+    print(solver.timer.summary(), '\n')
+    print(solver.linear_solver.timer.summary())
 

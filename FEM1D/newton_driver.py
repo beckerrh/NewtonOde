@@ -2,6 +2,7 @@ import linearFEM
 from Utility import mesh1d, plotting, logger, timer
 from types import SimpleNamespace
 from Newton import armijo
+import numpy as np
 
 
 class NewtonDriver:
@@ -9,11 +10,13 @@ class NewtonDriver:
         self.app = app
         self.mesh = mesh if mesh is not None else mesh1d.mesh(app.x0, app.x1, n=n0, type='uniform')
         self.solver = linearFEM.LinearElliptic(korder=korder, app=app)
-        self.lam0 = 0.9
-        self.C0 = 100.0
-        self.beta = 0.5
+        self.lamb = 0.9
+        self.kappa = 0.95
+        self.beta = 0.9
         self.theta = 0.9
-        types = {'it': 'd', 'zeta': 'e', 'N': 'd:7', '|p|':'e', 'eta': 'e', 'mer':'e', 'mu':'e'}
+        self.meritref = 0.1
+        self.clin = 0.01
+        types = {'it': 'd', 'deta': 'e', 'N': 'd:7', '|p|':'e', 'eta': 'e', '|F_h|':'e', 'mer':'e', 'beta':'e'}
         self.logger_mesh = logger.Logger(types=types, name="mesh")
         self.globalization = armijo.ArmijoGlobalization(
             maxiter=20,
@@ -22,13 +25,17 @@ class NewtonDriver:
             relative_decrease=True
         )
         self.timer = timer.Timer()
+        self.merits, self.etas, self.errs, self.ns = [], [], [], []
 
     def attach_logger(self, logger):
         self.logger_newton = logger
         self.logger_newton.add_types({'eta':'e', '|F_h|':'e', 'N': 'd:7', 'meshiter': 'd:3'})
         self.logger_newton.update(N=len(self.mesh))
     def initial_guess(self):
-        return self.solver.make_fe_vector(self.mesh)
+        uh = self.solver.make_fe_vector(self.mesh)
+        uh.p1[0, :] = self.app.uL
+        uh.p1[-1, :] = self.app.uR
+        return uh
     def add_update(self, x, alpha, p):
         return self.solver.add_update(x, alpha, p)
     def evaluate(self, x):
@@ -37,16 +44,21 @@ class NewtonDriver:
         resn = self.solver.normHminus1(self.mesh, res)
         with self.timer("estimator"):
             result = self.solver.compute_estimator_nonlinear(self.mesh, x)
-        meritvalue = result.eta_global+self.beta*resn
+        merit2 = result.eta_global ** 2 + self.beta * resn ** 2
+        meritvalue = np.sqrt(merit2)
         self.logger_newton.update(eta=result.eta_global)
         self.logger_newton.values["|F_h|"] = resn
         xnorm = self.solver.normH1(self.mesh, x)
         return SimpleNamespace(residual=res, meritvalue=meritvalue, norm_X=xnorm)
 
-    def compute_newton_step(self,  x, state, iterdata):
-        aimed = self.lam0*state.meritvalue
+    def compute_newton_step(self,  x, state, info):
+        aimed = self.lamb*state.meritvalue*min(1.0, (state.meritvalue/self.meritref)**self.kappa)
+        # print(f"###############{state.meritvalue=} {aimed=}")
         n_mesh_iter=100
         for iter_mesh in range(n_mesh_iter):
+            if iter_mesh == 0:
+                self.logger_mesh.print_names()
+                prev = None
             with self.timer("compute_residual"):
                 r = self.solver.compute_residual(self.mesh, x)
             resn = self.solver.normHminus1(self.mesh, r)
@@ -54,22 +66,36 @@ class NewtonDriver:
                 p = self.solver.solve_linearized(self.mesh, x, r)
             with self.timer("estimator"):
                 resultnl = self.solver.compute_estimator_nonlinear(self.mesh, x)
-                result = self.solver.compute_estimator(self.mesh, x, p)
+                result = self.solver.compute_estimator_linearized(self.mesh, x, p)
+            eta_new = resultnl.eta_global
+            self.eta_new = eta_new
+            if prev is None:
+                beta2 = np.nan
+            else:
+                eta_old, resn_old = prev
+                den = resn ** 2 - resn_old ** 2
+                beta2 = (eta_old ** 2 - eta_new ** 2) / den if den > 0 else np.nan
+            prev = (eta_new, resn)
+
             pnorm = self.solver.normH1(self.mesh, p)
-            if iter_mesh == 0:
-                self.logger_mesh.print_names()
-            self.logger_mesh.update(it=iter_mesh, zeta=result.deta_global,
+            self.logger_mesh.update(it=iter_mesh, deta=result.deta_global,
                                      N=len(self.mesh), eta=resultnl.eta_global,
-                                     mer=resultnl.eta_global+self.beta*resn)
+                                     mer=resultnl.eta_global+self.beta*resn,
+                                    beta=beta2)
             self.logger_mesh.values['|p|'] = pnorm
+            self.logger_mesh.values['|F_h|'] = resn
             self.logger_mesh.print()
             # print(f"\t  {info.iter} \t {iter_mesh} \t {aimed} \t {result.eta_global} \t {result.zeta_global}\t {len(self.mesh)}\t {pnorm}")
-            if result.deta_global <= aimed or result.deta_global < iterdata.tol_aimed:
+            meritvalue = np.sqrt(resultnl.eta_global ** 2 + self.beta * resn ** 2)
+            if result.deta_global <= aimed or meritvalue < info.tol or result.deta_global <= self.clin * resn:
+                # print(f"@@@@ {result.deta_global=} {aimed=} {meritvalue=}  {state.meritvalue=} {info.tol=}")
                 self.logger_newton.update(N=len(self.mesh), meshiter=iter_mesh)
                 return SimpleNamespace(dx=p, dx_norm=pnorm, x=x, success=True)
 
             mesh_new, refinfo = mesh1d.adapt_mesh(self.mesh, result.deta, theta=self.theta)
             x = self.solver.interpolate_to_new_mesh(self.mesh, x, mesh_new, refinfo)
+            x.p1[0, :] = self.app.uL
+            x.p1[-1, :] = self.app.uR
             self.mesh = mesh_new
 
         return SimpleNamespace(dx=p, dx_norm=pnorm, x=x, success=False)
@@ -83,6 +109,23 @@ class NewtonDriver:
         title = f"{name} =={accepted.success}== Iter {iterdata.iter}"
         plotting.plot_solutions(plot_dict, title=title)
         plt.show()
+        if iterdata.success:
+            self.ns.append(len(self.mesh))
+            self.etas.append(self.eta_new)
+            if hasattr(self.app,'solution'):
+                eL2, eH1 = self.solver.compute_error(self.mesh, accepted.x)
+                self.errs.append(eH1)
+    def plot_eta(self):
+        import matplotlib.pyplot as plt
+        ns = np.array(self.ns)
+        errs = np.array(self.errs)
+        etas = np.array(self.etas)
+        pdict = {'x': ns, 'y': {'eta': etas}}
+        if hasattr(self.app, 'solution'):
+            pdict['y']['err'] = errs
+        plot_dict = {f"Errors {app.name} k={self.solver.korder}":  pdict}
+        plotting.plot_error_curves(plot_dict, fixed_order=self.solver.korder)
+        plt.show()
 
 
 
@@ -91,19 +134,23 @@ if __name__ == "__main__":
     from Newton import newton, newtondata
     import elliptic_examples
     # app = elliptic_examples.OscillatoryPoisson(omega=9, alpha=13.0)
-    app = elliptic_examples.LinearSystem3()
+    # app = elliptic_examples.ExampleSystem(rho=2)
+    app = elliptic_examples.PotentialReactionSystem(rho=10)
 
-    sdata = newtondata.StoppingParamaters(maxiter=12, rtol=1e-10)
-    driver = NewtonDriver(app, n0=10, korder=4)
+    sdata = newtondata.StoppingParamaters(maxiter=50, rtol=1e-10)
+    driver = NewtonDriver(app, n0=11, korder=3)
     x0 = driver.initial_guess()
     newton = newton.Newton(nd = driver, verbose=2, sdata=sdata)
     xs, info, logger = newton.solve(x0)
 
-    print('---- time ---')
-    print(driver.timer.summary(),'\n')
-    print(driver.solver.timer.summary(),'\n')
-    print(driver.solver.linear_solver.timer.summary())
-
-    logger.print_history()
+    if not info.success:
+        print(info.success,info.failure)
+    else:
+        print('---- time ---')
+        print(driver.timer.summary(),'\n')
+        print(driver.solver.timer.summary(),'\n')
+        print(driver.solver.linear_solver.timer.summary())
+        driver.plot_eta()
+        logger.print_history()
 
 
