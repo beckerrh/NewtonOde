@@ -48,8 +48,8 @@ class Logger:
             f += f"{k:>{v}}"
         n = len(f)
         return n*'-'+'\n'+f+'\n'+n*'-'
-    def print_names(self):
-         print(self.header())
+    def print_names(self, add=""):
+         print(self.header()+add)
 
     def print(self):
         if not self.verbose: return

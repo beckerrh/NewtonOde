@@ -8,24 +8,7 @@ Created on Mon Dec  5 15:38:16 2016
 
 import numpy as np
 
-# class StoppingParamaters:
-#     def __repr__(self):
-#         return f"maxiter={self.maxiter} atol={self.atol} rtol={self.rtol}"
-#     def __init__(self, **kwargs):
-#         self.maxiter = kwargs.pop('maxiter',75)
-#         self.atol = kwargs.pop('atol',1e-12)
-#         self.rtol = kwargs.pop('rtol',1e-8)
-#         self.atoldx = kwargs.pop('atoldx',1e-12)
-#         self.rtoldx = kwargs.pop('rtoldx',1e-8)
-#         self.divx = kwargs.pop('divx',1e8)
-#         self.firststep = 1.0
-#         self.steptype = kwargs.pop('steptype','backtracking')
-#         if 'nbase' in kwargs: self.nbase = kwargs.pop('nbase')
-#         self.bt_maxiter = kwargs.pop('bt_maxiter',20)
-#         self.bt_omega = kwargs.pop('bt_omega',0.75)
-#         self.bt_c = kwargs.pop('bt_c',0.01)
-#         self.maxter_stepsize = 5
-#         self.dxincrease_max = 1e10
+
 class StoppingParamaters:
     def __repr__(self):
         return (
@@ -41,6 +24,8 @@ class StoppingParamaters:
         self.atoldx = kwargs.pop('atoldx', 1e-12)
         self.rtoldx = kwargs.pop('rtoldx', 1e-8)
         self.divx = kwargs.pop('divx', 1e8)
+        self.forcing_lambda = kwargs.pop('forcing_lambda', 0.9)
+        self.forcing_kappa = kwargs.pop('forcing_kappa', 0.5)
 
         if 'nbase' in kwargs:
             self.nbase = kwargs.pop('nbase')

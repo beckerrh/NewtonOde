@@ -22,7 +22,7 @@ class ArmijoGlobalization:
                 meritvalue_aimed = (1-self.c * alpha )*state.meritvalue
             else:
                 meritvalue_aimed = state.meritvalue + self.c * alpha * step.meritgrad
-
+            # print(f"{meritvalue_aimed=} {trial.meritvalue=}")
             if trial.meritvalue <= meritvalue_aimed:
                 return SimpleNamespace(
                     success=True,

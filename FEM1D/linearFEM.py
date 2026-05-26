@@ -269,10 +269,8 @@ class LinearElliptic:
     # -------------------------------------------------------------
     def make_laplace_matrix(self, mesh):
         nx, k, ncomp = mesh.shape[0], self.korder, self.app.ncomp
-        ne = nx - 1
 
         Alocal = None if k == 1 else self.make_local_fe_matrix(mesh)
-        Aglob = sparse.lil_matrix((nx * ncomp, nx * ncomp))
 
         A_lap_s = self.make_laplace_local_scalar(mesh)
         A = self.expand_scalar_local_to_system(A_lap_s)
@@ -289,29 +287,16 @@ class LinearElliptic:
 
         App = A[:, iv, :][:, :, iv]
 
-        for e in range(ne):
-            vertices = [e, e + 1]
-
-            for a_node_loc, a_node in enumerate(vertices):
-                for b_node_loc, b_node in enumerate(vertices):
-                    block = App[
-                            e,
-                            a_node_loc * ncomp:(a_node_loc + 1) * ncomp,
-                            b_node_loc * ncomp:(b_node_loc + 1) * ncomp,
-                            ]
-
-                    rows = slice(a_node * ncomp, (a_node + 1) * ncomp)
-                    cols = slice(b_node * ncomp, (b_node + 1) * ncomp)
-
-                    Aglob[rows, cols] += block
-
         if k > 1:
             Alocal.Apb[:, :, :] = A[:, iv, :][:, :, ib]
             Alocal.Abp[:, :, :] = A[:, ib, :][:, :, iv]
             Alocal.Abb[:, :, :] = A[:, ib, :][:, :, ib]
 
-        Ah = SimpleNamespace(local=Alocal, global_p1=Aglob.tocsr())
-        return self.dirichlet_matrix(mesh, Ah)
+        App, Alocal = self._dirichlet(ncomp, App, Alocal)
+
+        Aglob = self.assemble_p1_global_fast(mesh, App)
+
+        return SimpleNamespace(local=Alocal, global_p1=Aglob.tocsr())
     # -------------------------------------------------------------
     def make_diffusion_local_scalar(self, mesh):
         integ = self.integration["coeff"]
@@ -398,7 +383,32 @@ class LinearElliptic:
         if rh.bubbles is not None:
             val += np.sum(rh.bubbles * zh.bubbles)
         return np.sqrt(val)
-
+    # def normHminus1(self, mesh, rh):
+    #     Ah_lap = self.make_laplace_matrix(mesh)
+    #
+    #     condensed = self.linear_solver.condense(Ah_lap, rh)
+    #
+    #     Ac, fc = self.dirichlet_condensed(
+    #         mesh,
+    #         condensed.A,
+    #         condensed.b,
+    #         value=np.zeros((2, self.app.ncomp)),
+    #     )
+    #
+    #     p1 = self.linear_solver.solve_global(Ac, fc)
+    #
+    #     bubbles = self.linear_solver.recover_bubbles(
+    #         condensed.bubble_solver_data,
+    #         p1,
+    #     )
+    #
+    #     zh = SimpleNamespace(p1=p1, bubbles=bubbles)
+    #
+    #     val = np.sum(rh.p1 * zh.p1)
+    #     if rh.bubbles is not None and zh.bubbles is not None:
+    #         val += np.sum(rh.bubbles * zh.bubbles)
+    #
+    #     return np.sqrt(max(val, 0.0))
     # -------------------------------------------------------------
     def compute_error(self, mesh, uh):
         ne, k, ncomp = mesh.shape[0] - 1, self.korder, self.app.ncomp
@@ -666,30 +676,30 @@ class LinearElliptic:
         # convection: int beta u' v
         # no h factor: dx cancels derivative 1/h
         # ------------------------------------------------------------
-        Bcoef = self.normalize_coefficient(app.convection_coef(xq), xq)
-
-        if np.any(Bcoef != 0):
-            if Bcoef.ndim == xq.ndim:
-                B_s = np.einsum(
-                    "eq,aq,bq,q->eab",
-                    Bcoef, phi, dphi, w,
-                    optimize=True,
-                )
-                App += np.einsum(
-                    "eab,cd->eacbd",
-                    B_s, np.eye(ncomp),
-                    optimize=True,
-                ).reshape(ne, ndloc, ndloc)
-            else:
-                if Bcoef.ndim == 2:
-                    Bcoef = np.broadcast_to(Bcoef, xq.shape + Bcoef.shape)
-
-                B = np.einsum(
-                    "eqcd,aq,bq,q->eacbd",
-                    Bcoef, phi, dphi, w,
-                    optimize=True,
-                )
-                App += B.reshape(ne, ndloc, ndloc)
+        # Bcoef = self.normalize_coefficient(app.convection_coef(xq), xq)
+        #
+        # if np.any(Bcoef != 0):
+        #     if Bcoef.ndim == xq.ndim:
+        #         B_s = np.einsum(
+        #             "eq,aq,bq,q->eab",
+        #             Bcoef, phi, dphi, w,
+        #             optimize=True,
+        #         )
+        #         App += np.einsum(
+        #             "eab,cd->eacbd",
+        #             B_s, np.eye(ncomp),
+        #             optimize=True,
+        #         ).reshape(ne, ndloc, ndloc)
+        #     else:
+        #         if Bcoef.ndim == 2:
+        #             Bcoef = np.broadcast_to(Bcoef, xq.shape + Bcoef.shape)
+        #
+        #         B = np.einsum(
+        #             "eqcd,aq,bq,q->eacbd",
+        #             Bcoef, phi, dphi, w,
+        #             optimize=True,
+        #         )
+        #         App += B.reshape(ne, ndloc, ndloc)
 
         # ------------------------------------------------------------
         # tangent reaction: - int df_du(x,u) p v
@@ -725,8 +735,8 @@ class LinearElliptic:
         Aglob = self.assemble_p1_global_fast(mesh, App)
         return SimpleNamespace(local=None, global_p1=Aglob)
     def matrix(self, mesh, uh=None):
-        # if self.korder == 1:
-        #     return self.matrix_p1_tangent_fast(mesh, uh)
+        if self.korder == 1:
+            return self.matrix_p1_tangent_fast(mesh, uh)
         app = self.app
         k = self.korder
         ncomp = app.ncomp
@@ -834,14 +844,30 @@ class LinearElliptic:
         ]
         bubble_ids = np.arange(ncomp, k * ncomp)
 
-        App = Aloc[:, vertex_ids[:, None], vertex_ids]
 
-        Aglob = self.assemble_p1_global_fast(mesh, App)
+        App = Aloc[:, vertex_ids[:, None], vertex_ids]
 
         if k > 1:
             Alocal.Apb[:, :, :] = Aloc[:, vertex_ids[:, None], bubble_ids]
             Alocal.Abp[:, :, :] = Aloc[:, bubble_ids[:, None], vertex_ids]
             Alocal.Abb[:, :, :] = Aloc[:, bubble_ids[:, None], bubble_ids]
+
+        App, Alocal = self._dirichlet(ncomp, App, Alocal)
+        # Change for Dirichlet
+        # left boundary row
+        # App[0, 0:ncomp, :] = 0.0
+        # for c in range(ncomp):
+        #     App[0, c, c] = 1.0
+        # # right boundary row
+        # r0 = ncomp
+        # App[-1, r0:r0 + ncomp, :] = 0.0
+        # for c in range(ncomp):
+        #     App[-1, r0 + c, r0 + c] = 1.0
+        # if k > 1:
+        #     Alocal.Apb[0, 0:ncomp, :] = 0.0
+        #     Alocal.Apb[-1, ncomp:2 * ncomp, :] = 0.0
+
+        Aglob = self.assemble_p1_global_fast(mesh, App)
 
         return SimpleNamespace(local=Alocal, global_p1=Aglob.tocsr())
     # -------------------------------------------------------------
@@ -853,69 +879,152 @@ class LinearElliptic:
         fh.p1[0, :] = 0.0
         fh.p1[-1, :] = 0.0
         return fh
-    def dirichlet_matrix(self, mesh, Ah):
-        # if self.korder == 1: return Ah
-        nx, k, ncomp = mesh.shape[0], self.korder, self.app.ncomp
-        Aglobal, Alocal = Ah.global_p1, Ah.local
-        bc = []
-        for c in range(ncomp):
-            bc.append(c)
-            bc.append((nx - 1) * ncomp + c)
-        if Alocal is not None:
-            # Prevent condensation from modifying boundary P1 equations
-            for c in range(ncomp):
-                Alocal.Apb[0, c, :] = 0.0
-                Alocal.Apb[-1, ncomp + c, :] = 0.0
-        # Dirichlet P1
-        # A = Aglobal.tolil()
-        # for i in bc:
-        #     A[i, :] = 0.0
-        #     A[i, i] = 1.0
-        # return SimpleNamespace(local=Alocal, global_p1=A.tocsc())
-        A = Aglobal
-        left = np.arange(ncomp)
-        right = np.arange((nx - 1) * ncomp, nx * ncomp)
-        bc = np.concatenate([left, right])
-        starts = A.indptr[bc]
-        ends = A.indptr[bc + 1]
-        for s, e in zip(starts, ends):
-            A.data[s:e] = 0.0
-        for i, s, e in zip(bc, starts, ends):
-            cols = A.indices[s:e]
-            j = np.searchsorted(cols, i)
-            A.data[s + j] = 1.0
-        # for node in [0, nx - 1]:
-        #     for c in range(ncomp):
-        #         i = node * ncomp + c
-        #         start, end = A.indptr[i], A.indptr[i + 1]
-        #         A.data[start:end] = 0.0
-        #         cols = A.indices[start:end]
-        #         j = np.searchsorted(cols, i)
-        #         assert j < len(cols) and cols[j] == i
-        #         A.data[start + j] = 1.0
-        return SimpleNamespace(local=Alocal, global_p1=A)
 
+    def _dirichlet(self, ncomp, App, Alocal):
+        # left boundary row
+        App[0, 0:ncomp, :] = 0.0
+        App[0, 0:ncomp, 0:ncomp] = np.eye(ncomp)
+
+        # right boundary row
+        r0 = ncomp
+        App[-1, r0:r0 + ncomp, :] = 0.0
+        App[-1, r0:r0 + ncomp, r0:r0 + ncomp] = np.eye(ncomp)
+
+        if Alocal is not None:
+            Alocal.Apb[0, 0:ncomp, :] = 0.0
+            Alocal.Apb[-1, ncomp:2 * ncomp, :] = 0.0
+
+        return App, Alocal
+
+    # def dirichlet_matrix(self, mesh, Ah):
+    #     # if self.korder == 1: return Ah
+    #     nx, k, ncomp = mesh.shape[0], self.korder, self.app.ncomp
+    #     Aglobal, Alocal = Ah.global_p1, Ah.local
+    #     bc = []
+    #     for c in range(ncomp):
+    #         bc.append(c)
+    #         bc.append((nx - 1) * ncomp + c)
+    #     if Alocal is not None:
+    #         # Prevent condensation from modifying boundary P1 equations
+    #         for c in range(ncomp):
+    #             Alocal.Apb[0, c, :] = 0.0
+    #             Alocal.Apb[-1, ncomp + c, :] = 0.0
+    #     # Dirichlet P1
+    #     # A = Aglobal.tolil()
+    #     # for i in bc:
+    #     #     A[i, :] = 0.0
+    #     #     A[i, i] = 1.0
+    #     # return SimpleNamespace(local=Alocal, global_p1=A.tocsc())
+    #     A = Aglobal
+    #     left = np.arange(ncomp)
+    #     right = np.arange((nx - 1) * ncomp, nx * ncomp)
+    #     bc = np.concatenate([left, right])
+    #     starts = A.indptr[bc]
+    #     ends = A.indptr[bc + 1]
+    #     for s, e in zip(starts, ends):
+    #         A.data[s:e] = 0.0
+    #     for i, s, e in zip(bc, starts, ends):
+    #         cols = A.indices[s:e]
+    #         j = np.searchsorted(cols, i)
+    #         A.data[s + j] = 1.0
+    #     # for node in [0, nx - 1]:
+    #     #     for c in range(ncomp):
+    #     #         i = node * ncomp + c
+    #     #         start, end = A.indptr[i], A.indptr[i + 1]
+    #     #         A.data[start:end] = 0.0
+    #     #         cols = A.indices[start:end]
+    #     #         j = np.searchsorted(cols, i)
+    #     #         assert j < len(cols) and cols[j] == i
+    #     #         A.data[start + j] = 1.0
+    #     return SimpleNamespace(local=Alocal, global_p1=A)
+
+    # def dirichlet_condensed(self, mesh, A, b, value=None):
+    #     nx, ncomp = mesh.shape[0], self.app.ncomp
+    #
+    #     if value is None:
+    #         value = np.zeros((2, ncomp))
+    #     # value[0] = left value, value[1] = right value
+    #
+    #     A = A.tolil()
+    #     b = b.copy().reshape(nx, ncomp)
+    #
+    #     bc_nodes = [0, nx - 1]
+    #     bc_vals = [value[0], value[1]]
+    #
+    #     for node, val in zip(bc_nodes, bc_vals):
+    #         for c in range(ncomp):
+    #             i = node * ncomp + c
+    #
+    #             # subtract column contribution from RHS
+    #             col = A[:, i].toarray().ravel()
+    #             b.reshape(-1)[:] -= col * val[c]
+    #
+    #             # zero row and column
+    #             A[:, i] = 0.0
+    #             A[i, :] = 0.0
+    #             A[i, i] = 1.0
+    #
+    #             b[node, c] = val[c]
+    #
+    #     return A.tocsr(), b
     # -------------------------------------------------------------
+    # def solve(self, mesh, uh=None):
+    #     if uh is None:
+    #         uh = self.make_fe_vector(mesh)
+    #     fh = self.rhs(mesh, uh)
+    #     # fh = self.dirichlet_zero(mesh, fh)
+    #     fh = self.dirichlet(mesh, fh)
+    #     return self.solve_linearized(mesh, uh, fh)
+
+    # def solve(self, mesh, uh=None):
+    #     if uh is None:
+    #         uh = self.make_fe_vector(mesh)
+    #     fh = self.rhs(mesh, uh)
+    #     value = np.vstack([self.app.uL, self.app.uR])
+    #     return self.solve_linearized(mesh, uh, fh, dirichlet_value=value)
     def solve(self, mesh, uh=None):
         if uh is None:
             uh = self.make_fe_vector(mesh)
-        fh = self.rhs(mesh, uh)
-        # fh = self.dirichlet_zero(mesh, fh)
-        fh = self.dirichlet(mesh, fh)
-        return self.solve_linearized(mesh, uh, fh)
-        Ah = self.matrix(mesh, uh)
-        Ah = self.dirichlet_matrix(mesh, Ah)
-        return self.linear_solver.solve(Ah, fh)
 
-    # -------------------------------------------------------------
+        fh = self.rhs(mesh, uh)
+
+        return self.solve_linearized(
+            mesh,
+            uh,
+            fh
+        )
+
     def solve_linearized(self, mesh, uh, fh):
         with self.timer("matrix"):
             Ah = self.matrix(mesh, uh)
-            Ah = self.dirichlet_matrix(mesh, Ah)
         with self.timer("linear_solver"):
-            res = self.linear_solver.solve(Ah, fh)
-        return res
-
+            return self.linear_solver.solve(Ah, fh)
+    # -------------------------------------------------------------
+    # def solve_linearized(self, mesh, uh, fh, dirichlet_value=None):
+    #     # with self.timer("matrix"):
+    #     # with self.timer("linear_solver"):
+    #     if dirichlet_value is None:
+    #         dirichlet_value = np.zeros((2, self.app.ncomp))
+    #     Ah = self.matrix(mesh, uh)
+    #     condensed = self.linear_solver.condense(Ah, fh)
+    #
+    #     Ac, fc = self.dirichlet_condensed(
+    #         mesh,
+    #         condensed.A,
+    #         condensed.b,
+    #         value=dirichlet_value,
+    #     )
+    #
+    #     p1 = self.linear_solver.solve_global(Ac, fc)
+    #
+    #     bubbles = self.linear_solver.recover_bubbles(
+    #         condensed.bubble_solver_data,
+    #         p1,
+    #     )
+    #     return SimpleNamespace(
+    #         p1=p1,
+    #         bubbles=bubbles,
+    #     )
 #===========================================================================
 if __name__ == '__main__':
     import elliptic_examples
@@ -975,13 +1084,13 @@ if __name__ == '__main__':
         plt.show()
 
 
-    # app = elliptic_examples.Poisson()
+    app = elliptic_examples.Poisson()
     # app = elliptic_examples.SmoothPoisson()
     # app = elliptic_examples.OscillatoryPoisson(omega=5, alpha=3.0)
     # app = elliptic_examples.DiscontinuousAlphaOscillator()
-    app = elliptic_examples.InteriorLayerVariableAlpha()
+    # app = elliptic_examples.InteriorLayerVariableAlpha()
     # app = elliptic_examples.LinearSystem3()
-    solver = LinearElliptic(korder=1, app=app)
+    solver = LinearElliptic(korder=7, app=app)
     check_error(solver, niter=21)
     print(solver.timer.summary(), '\n')
     print(solver.linear_solver.timer.summary())

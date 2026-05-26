@@ -119,35 +119,13 @@ class Newton:
         self.iterdata.meritvalue_old = state.meritvalue
         if step is not None:
             self.iterdata.dx_norm_old = step.dx_norm
-    # def log_iteration(self, it, state, step=None, accepted=None):
-    #     vals = {
-    #         "it": it,
-    #         "mer": state.meritvalue,
-    #         "|x|": state.norm_X,
-    #         "type": getattr(step, "step_type", "?"),
-    #     }
-    #
-    #     if step is not None:
-    #         vals["|dx|"] = step.dx_norm
-    #         vals["lin"] = getattr(step, "liniter", 0)
-    #
-    #     if accepted is not None:
-    #         for key, typ in getattr(self.globalization, "log_types", {}).items():
-    #             if hasattr(accepted, key):
-    #                 vals[key] = getattr(accepted, key)
-    #             elif typ == "i":
-    #                 vals[key] = 0
-    #             else:
-    #                 vals[key] = np.nan
-    #
-    #     self.logger.update(**vals)
-    #     self.logger.print()
     # ----------------------------------------------------------------------
     def acceptable_step(self, state, step, accepted):
         if not accepted.success:
             return False
         actual_dx = accepted.alpha * step.dx_norm
         step_type = getattr(step, "step_type", "newton")
+        # print(f"{actual_dx=} {state.norm_X=} {accepted.state.meritvalue=} {state.meritvalue=}")
         if step_type == "newton":
             if accepted.alpha < 1e-8:
                 return False
@@ -188,15 +166,23 @@ class Newton:
         raise ValueError(f"unknown step_type {request.step_type}")
     # ----------------------------------------------------------------------
     def compute_step(self, x, state, info):
-        tol = max(self.sdata.atol, self.sdata.rtol * state.meritvalue)
+        phi = state.meritvalue
 
-        self.iterdata.tol_aimed = tol
-        self.iterdata.tol_missing = tol / max(state.meritvalue, 1e-300)
+        # Current inexact Newton forcing tolerance.
+        # This is NOT the final stopping tolerance.
+        lambda_k = min(self.sdata.forcing_lambda, phi ** self.sdata.forcing_kappa)
+
+        info.lambda_k = lambda_k
+        info.tol_linear_abs = lambda_k * phi
+        info.tol_linear_abs = max(info.tol_stop_abs, info.tol_linear_abs)
 
         step0 = self.build_step(x, state, info)
 
         accepted = self.globalization.accept(
-            state=state, step=step0, solver=self, info=self.iterdata
+            state=state,
+            step=step0,
+            solver=self,
+            info=info,
         )
 
         step = getattr(accepted, "step", step0)
@@ -206,36 +192,47 @@ class Newton:
 
         if hasattr(self.nd, "compute_gradient_step"):
             step = self.build_step(
-                x, state, info=info,
-                request=SimpleNamespace(step_type="gradient")
+                x,
+                state,
+                info=info,
+                request=SimpleNamespace(step_type="gradient"),
             )
+
             accepted = self.globalization.accept(
-                state=state, step=step, solver=self, info=self.iterdata
+                state=state,
+                step=step,
+                solver=self,
+                info=info,
             )
+
             step = getattr(accepted, "step", step)
 
         return step, accepted
     # ----------------------------------------------------------------------
     def solve(self, x):
         state = self.nd.evaluate(x)
-        self.iterdata.reset(state.meritvalue)
-        self.iterdata.meritvalue_old = state.meritvalue
-        self.iterdata.dx_norm_old = None
-        tol = max(self.sdata.atol, self.sdata.rtol * state.meritvalue)
-        toldx = max(self.sdata.atoldx, self.sdata.rtoldx * state.norm_X)
-        self.logger.print_names()
 
+        merit0 = state.meritvalue
+        tol_stop = max(self.sdata.atol, self.sdata.rtol * merit0)
+
+        self.iterdata.reset(merit0)
+        self.iterdata.tol_stop_abs = tol_stop
+        self.iterdata.merit0 = merit0
+        self.logger.print_names()
         for it in range(self.sdata.maxiter):
             self.iterdata.iter = it
-            if state.meritvalue < tol:
+
+            if state.meritvalue <= tol_stop:
                 self.iterdata.success = True
                 self.iterdata.failure = None
                 return x, self.iterdata, self.logger
 
             info = SimpleNamespace(
                 it=it,
-                tol=tol,
+                merit0=merit0,
+                tol_stop_abs=tol_stop,
             )
+
 
             step, accepted = self.compute_step(x, state, info)
 
