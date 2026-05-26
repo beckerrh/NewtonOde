@@ -7,15 +7,19 @@ Robust strategy:
     2. propagate boundary labels by splitting labelled boundary edges,
     3. rebuild all derived topology/geometry from scratch.
 
-This avoids fragile incremental updates of facesOfCells/cellsOfFaces.
+This avoids fragile incremental updates of faces_of_cells/cells_of_faces.
 """
 
 import numpy as np
+from contextlib import nullcontext
 
 from FEM2D.mesh.mesh_edges import compute_edges, face_dict, sorted_edge
 from FEM2D.mesh.mesh_checks import check_no_degenerate_cells, check_no_nonmanifold_edges, check_boundary_normals
 
 from collections import defaultdict
+
+def _timed(timer, name):
+    return timer(name) if timer is not None else nullcontext()
 
 def _cell_edges(tri):
     a, b, c = map(int, tri)
@@ -97,16 +101,6 @@ def _ensure_refedges(mesh):
     return mesh.refedges
 
 
-# def _face_index_from_edge(mesh, edge):
-#     fmap = face_dict(mesh.faces)
-#     return fmap[sorted_edge(edge[0], edge[1])]
-# def ensure_midpoint(edge, points, new_points, edge_to_mid):
-#     edge = tuple(sorted(map(int, edge)))
-#     if edge not in edge_to_mid:
-#         a, b = edge
-#         edge_to_mid[edge] = len(new_points)
-#         new_points.append(0.5 * (points[a] + points[b]))
-#     return edge_to_mid[edge]
 def debug_nonmanifold_edges(cells):
     edge_to_cells = defaultdict(list)
     for ic, c in enumerate(cells):
@@ -128,64 +122,6 @@ def _third_vertex(tri, a, b):
             return v
     raise RuntimeError("degenerate triangle")
 
-
-# def _split_triangle_by_edges(tri, refined_edges, edge_to_mid):
-#     """
-#     Convention-free triangle splitting.
-#
-#     refined_edges: list of edge tuples (a,b) actually refined.
-#     """
-#     tri = list(map(int, tri))
-#     refined_edges = [tuple(map(int, e)) for e in refined_edges]
-#
-#     if len(refined_edges) == 0:
-#         return [tri]
-#
-#     if len(refined_edges) == 1:
-#         a, b = refined_edges[0]
-#         m = edge_to_mid[sorted_edge(a, b)]
-#         c = _third_vertex(tri, a, b)
-#         return [
-#             [a, m, c],
-#             [m, b, c],
-#         ]
-#
-#     if len(refined_edges) == 2:
-#         e0, e1 = refined_edges
-#         common = set(e0).intersection(e1)
-#
-#         if len(common) != 1:
-#             raise RuntimeError("two refined edges do not share a vertex")
-#
-#         a = common.pop()
-#         b = e0[0] if e0[1] == a else e0[1]
-#         c = e1[0] if e1[1] == a else e1[1]
-#
-#         mab = edge_to_mid[sorted_edge(a, b)]
-#         mac = edge_to_mid[sorted_edge(a, c)]
-#
-#         return [
-#             [a, mab, mac],
-#             [mab, b, c],
-#             [mab, c, mac],
-#         ]
-#
-#     if len(refined_edges) == 3:
-#         a, b, c = tri
-#
-#         mab = edge_to_mid[sorted_edge(a, b)]
-#         mbc = edge_to_mid[sorted_edge(b, c)]
-#         mca = edge_to_mid[sorted_edge(c, a)]
-#
-#         return [
-#             [a, mab, mca],
-#             [mab, b, mbc],
-#             [mca, mbc, c],
-#             [mab, mbc, mca],
-#         ]
-#
-#     raise RuntimeError("too many refined edges")
-# ====================================================================== #
 def _edge_midpoint(edge, points, edge_to_mid, new_points):
     a, b = edge
     e = sorted_edge(a, b)
@@ -261,7 +197,7 @@ def _apply_boundary_labels(mesh, boundary_edge_labels):
 
 
 # ====================================================================== #
-def refine_nvb(mesh, marked, method="NVB", debug=False):
+def refine_nvb(mesh, marked, debug=False, timer=None):
     """
     Refine marked triangles using newest-vertex bisection closure.
 
@@ -292,7 +228,7 @@ def refine_nvb(mesh, marked, method="NVB", debug=False):
     # ------------------------------------------------------------------ #
     # Edge data
     # ------------------------------------------------------------------ #
-    faces_of_cells = mesh.facesOfCells
+    faces_of_cells = mesh.faces_of_cells
     faces = mesh.faces
     fmap = face_dict(mesh.faces)
     cells = mesh.cells
@@ -301,118 +237,121 @@ def refine_nvb(mesh, marked, method="NVB", debug=False):
     # ------------------------------------------------------------------ #
     # Closure propagation
     # ------------------------------------------------------------------ #
-    refine_edge = np.zeros(mesh.faces.shape[0], dtype=bool)
 
-    refedges = _ensure_refedges(mesh)
-    if debug:
-        check_refedges(mesh, "entry")
+    with _timed(timer, "closure"):
+        refine_edge = np.zeros(mesh.faces.shape[0], dtype=bool)
 
-    for icell in np.flatnonzero(marked):
-        iface = fmap[sorted_edge(refedges[icell, 0], refedges[icell, 1])]
-        # iface = _face_index_from_edge(mesh, refedges[icell])
-        refine_edge[iface] = True
+        refedges = _ensure_refedges(mesh)
+        if debug:
+            check_refedges(mesh, "entry")
 
-    changed = True
+        for icell in np.flatnonzero(marked):
+            iface = fmap[sorted_edge(refedges[icell, 0], refedges[icell, 1])]
+            # iface = _face_index_from_edge(mesh, refedges[icell])
+            refine_edge[iface] = True
 
-    while changed:
-        changed = False
+        changed = True
+        while changed:
+            changed = False
 
-        for icell in range(ncells):
+            for icell in range(ncells):
 
-            tri = list(map(int, cells[icell]))
-            refedge = sorted_edge(refedges[icell, 0], refedges[icell, 1])
-            # iref = _face_index_from_edge(mesh, refedge)
-            iref = fmap[refedge]
+                tri = list(map(int, cells[icell]))
+                refedge = sorted_edge(refedges[icell, 0], refedges[icell, 1])
+                # iref = _face_index_from_edge(mesh, refedge)
+                iref = fmap[refedge]
 
-            local_faces = faces_of_cells[icell]
+                local_faces = faces_of_cells[icell]
 
-            # If any edge of this cell is marked, the cell must be bisected
-            # along its own reference edge.
-            if np.any(refine_edge[local_faces]) and not refine_edge[iref]:
-                refine_edge[iref] = True
-                changed = True
+                # If any edge of this cell is marked, the cell must be bisected
+                # along its own reference edge.
+                if np.any(refine_edge[local_faces]) and not refine_edge[iref]:
+                    refine_edge[iref] = True
+                    changed = True
 
-    # ------------------------------------------------------------------ #
-    edge_to_mid = {}
+        # ------------------------------------------------------------------ #
+        edge_to_mid = {}
 
-    new_points = [p.copy() for p in points]
+        new_points = [p.copy() for p in points]
 
-    for iface, flag in enumerate(refine_edge):
+        for iface, flag in enumerate(refine_edge):
 
-        if not flag:
-            continue
+            if not flag:
+                continue
 
-        a, b = faces[iface]
+            a, b = faces[iface]
 
-        _edge_midpoint(
-            (a, b),
-            points,
-            edge_to_mid,
-            new_points,
-        )
+            _edge_midpoint(
+                (a, b),
+                points,
+                edge_to_mid,
+                new_points,
+            )
 
     # ------------------------------------------------------------------ #
     # Build refined cells
     # ------------------------------------------------------------------ #
-    new_cells = []
-    new_refedges = []
-    new_celllabels = []
+    with _timed(timer, "rebuild"):
+        new_cells = []
+        new_refedges = []
+        new_celllabels = []
 
-    old_celllabels = np.empty(ncells, dtype=int)
-    for label, ids in mesh.cellsoflabel.items():
-        old_celllabels[np.asarray(ids, dtype=int)] = label
+        old_celllabels = np.empty(ncells, dtype=int)
+        for label, ids in mesh.cellsoflabel.items():
+            old_celllabels[np.asarray(ids, dtype=int)] = label
 
-    marked_edges = {
-        sorted_edge(faces[iface, 0], faces[iface, 1])
-        for iface, flag in enumerate(refine_edge)
-        if flag
-    }
+        marked_edges = {
+            sorted_edge(faces[iface, 0], faces[iface, 1])
+            for iface, flag in enumerate(refine_edge)
+            if flag
+        }
 
-    for icell in range(ncells):
-        tri = list(map(int, cells[icell]))
-        refedge = tuple(map(int, refedges[icell]))
+        for icell in range(ncells):
+            tri = list(map(int, cells[icell]))
+            refedge = tuple(map(int, refedges[icell]))
 
-        childs, child_refs = _refine_cell_recursive_nvb(
-            tri,
-            refedge,
-            marked_edges,
-            points,
-            new_points,
-            edge_to_mid,
-        )
+            childs, child_refs = _refine_cell_recursive_nvb(
+                tri,
+                refedge,
+                marked_edges,
+                points,
+                new_points,
+                edge_to_mid,
+            )
 
-        new_cells.extend(childs)
-        new_refedges.extend(child_refs)
-        new_celllabels.extend([old_celllabels[icell]] * len(childs))
+            new_cells.extend(childs)
+            new_refedges.extend(child_refs)
+            new_celllabels.extend([old_celllabels[icell]] * len(childs))
     # ------------------------------------------------------------------ #
 
-    boundary_edge_labels = _split_boundary_labels(mesh, edge_to_mid)
+    with _timed(timer, "bdry_labels"):
 
-    mesh.points = np.asarray(new_points)
+        boundary_edge_labels = _split_boundary_labels(mesh, edge_to_mid)
 
-    mesh.cells = np.asarray(new_cells, dtype=int)
-    mesh.celllabels = np.asarray(new_celllabels, dtype=int)
-    mesh.refedges = np.asarray(new_refedges, dtype=int)
-    if debug:
-        check_refedges(mesh, "before finalize")
-    # print("len new_cells", len(new_cells))
-    # print("len new_celllabels", len(new_celllabels))
-    # print("unique celllabels", np.unique(mesh.celllabels, return_counts=True))
+        mesh.points = np.asarray(new_points)
+
+        mesh.cells = np.asarray(new_cells, dtype=int)
+        mesh.celllabels = np.asarray(new_celllabels, dtype=int)
+        mesh.refedges = np.asarray(new_refedges, dtype=int)
+        if debug:
+            check_refedges(mesh, "before finalize")
 
     # ------------------------------------------------------------------ #
     # Rebuild topology
     # ------------------------------------------------------------------ #
-    mesh.finalize_after_topology_change()
+    with _timed(timer, "finalize"):
+        mesh.finalize_after_topology_change(timer=timer)
     if debug:
         check_refedges(mesh, "after finalize")
     # ------------------------------------------------------------------ #
     # Boundary labels
     # ------------------------------------------------------------------ #
 
-    _apply_boundary_labels(
-        mesh,
-        boundary_edge_labels,
-    )
+    with _timed(timer, "bdry_labels"):
+        _apply_boundary_labels(
+            mesh,
+            boundary_edge_labels,
+        )
 
     # ------------------------------------------------------------------ #
     # Safety checks

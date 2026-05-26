@@ -21,7 +21,7 @@ def construct_normals_and_volumes(mesh):
             axis=-1,
         )
         dx1 = x[elem[:, 1]] - x[elem[:, 0]]
-        mesh.cell_volumes = np.abs(dx1)
+        mesh.self.mesh.cell_volumes = np.abs(dx1)
 
     elif mesh.dimension == 2:
         x, y = points[:, 0], points[:, 1]
@@ -66,7 +66,7 @@ def construct_normals_and_volumes(mesh):
         dz2 = z[elem[:, 2]] - z[elem[:, 0]]
         dz3 = z[elem[:, 3]] - z[elem[:, 0]]
 
-        mesh.cell_volumes = (1.0 / 6.0) * np.abs(
+        mesh.self.mesh.cell_volumes = (1.0 / 6.0) * np.abs(
             dx1 * (dy2 * dz3 - dy3 * dz2)
             - dx2 * (dy1 * dz3 - dy3 * dz1)
             + dx3 * (dy1 * dz2 - dy2 * dz1)

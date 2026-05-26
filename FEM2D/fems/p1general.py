@@ -29,16 +29,16 @@ class P1general():
     def computeMatrixDiffusion(self, coeff, coeffM=None):
         ndofs = self.nunknowns()
         cellgrads = self.cellgrads[:,:,:self.mesh.dimension]
-        mat = np.einsum('n,nil,njl->nij', self.mesh.dV*coeff, cellgrads, cellgrads)
+        mat = np.einsum('n,nil,njl->nij', self.mesh.cell_volumes*coeff, cellgrads, cellgrads)
         if coeffM: mat += self._computeMassMatrix(coeff=coeffM)
         return sparse.coo_matrix((mat.ravel(), (self.rows, self.cols)), shape=(ndofs, ndofs)).tocsr()
     def computeFormDiffusion(self, du, u, coeff):
         doc = self.dofspercell()
         cellgrads = self.cellgrads[:,:,:self.mesh.dimension]
-        r = np.einsum('n,nil,njl,nj->ni', self.mesh.dV*coeff, cellgrads, cellgrads, u[doc])
+        r = np.einsum('n,nil,njl,nj->ni', self.mesh.cell_volumes*coeff, cellgrads, cellgrads, u[doc])
         np.add.at(du, doc, r)
     def computeMatrixLps(self, betart, lpsparam=0.1):
-        dimension, dV, ndofs, nloc, dofspercell = self.mesh.dimension, self.mesh.dV, self.nunknowns(), self.nlocal(), self.dofspercell()
+        dimension, dV, ndofs, nloc, dofspercell = self.mesh.dimension, self.mesh.cell_volumes, self.nunknowns(), self.nlocal(), self.dofspercell()
         if not hasattr(self.mesh,'innerfaces'): self.mesh.constructInnerFaces()
         ci = self.mesh.cellsOfInteriorFaces
         ci0, ci1 = ci[:,0], ci[:,1]
@@ -65,7 +65,7 @@ class P1general():
         return A00+A01+A10+A11
     def computeFormLps(self, du, u, betart, lpsparam=0.1):
         # assert 0
-        dimension, dV, ndofs, nloc, dofspercell = self.mesh.dimension, self.mesh.dV, self.nunknowns(), self.nlocal(), self.dofspercell()
+        dimension, dV, ndofs, nloc, dofspercell = self.mesh.dimension, self.mesh.cell_volumes, self.nunknowns(), self.nlocal(), self.dofspercell()
         ci = self.mesh.cellsOfInteriorFaces
         ci0, ci1 = ci[:,0], ci[:,1]
         normalsS = self.mesh.normals[self.mesh.innerfaces]
@@ -85,7 +85,7 @@ class P1general():
         np.add.at(du, dofspercell[ci1,:], mat)
     def computeFormTransportCellWise(self, du, u, data, type):
         beta, betart = data.betacell, data.betart
-        ndofs, dim, dV, dofspercell = self.nunknowns(), self.mesh.dimension, self.mesh.dV, self.dofspercell()
+        ndofs, dim, dV, dofspercell = self.nunknowns(), self.mesh.dimension, self.mesh.cell_volumes, self.dofspercell()
         cellgrads = self.cellgrads[:,:,:dim]
         if type=='centered':
             mat = np.einsum('n,njk,nk,i,nj -> ni', dV, cellgrads, beta, 1/(dim+1)*np.ones(dim+1),u[dofspercell])
@@ -97,8 +97,8 @@ class P1general():
         self.massDotBoundary(du, u, coeff=-np.minimum(betart, 0))
     def computeMatrixTransportCellWise(self, data, type):
         beta, betart = data.betacell, data.betart
-        ndofs, dim, dV, dofspercell = self.nunknowns(), self.mesh.dimension, self.mesh.dV, self.dofspercell()
-        # nfaces, dim, dV = self.mesh.nfaces, self.mesh.dimension, self.mesh.dV
+        ndofs, dim, dV, dofspercell = self.nunknowns(), self.mesh.dimension, self.mesh.cell_volumes, self.dofspercell()
+        # nfaces, dim, dV = self.mesh.nfaces, self.mesh.dimension, self.mesh.cell_volumes
         cellgrads = self.cellgrads[:,:,:dim]
         if type=='centered':
             # betagrad = np.einsum('njk,nk -> nj', cellgrads, beta)

@@ -23,9 +23,9 @@ class P1(p1general.P1general):
     def nunknowns(self): return self.mesh.nnodes
     def dofspercell(self): return self.mesh.cells
     def computeCellGrads(self):
-        ncells, normals, cellsOfFaces, facesOfCells, dV = self.mesh.ncells, self.mesh.normals, self.mesh.cellsOfFaces, self.mesh.facesOfCells, self.mesh.dV
+        ncells, normals, cells_of_faces, faces_of_cells, dV = self.mesh.ncells, self.mesh.normals, self.mesh.cells_of_faces, self.mesh.faces_of_cells, self.mesh.cell_volumes
         scale = -1/self.mesh.dimension
-        return scale*(normals[facesOfCells].T * self.mesh.sigma.T / dV.T).T
+        return scale*(normals[faces_of_cells].T * self.mesh.sigma.T / dV.T).T
     def tonode(self, u): return u
     #  bc
     def prepareBoundary(self, colorsdir, colorsflux=[]):
@@ -109,9 +109,9 @@ class P1(p1general.P1general):
         massloc = barycentric.tensor(d=dim - 1, k=2)
         massloc = np.diag(np.sum(massloc,axis=1))
         faces = self.mesh.bdryFaces(colors)
-        nodes, cells, normalsS = self.mesh.faces[faces], self.mesh.cellsOfFaces[faces,0], self.mesh.normals[faces,:dim]
+        nodes, cells, normalsS = self.mesh.faces[faces], self.mesh.cells_of_faces[faces,0], self.mesh.normals[faces,:dim]
         dS = linalg.norm(normalsS, axis=1)
-        simp, dV = self.mesh.cells[cells], self.mesh.dV[cells]
+        simp, dV = self.mesh.cells[cells], self.mesh.cell_volumes[cells]
         dS *= nitsche_param * coeff * diffcoff[cells] * dS / dV
         r = np.einsum('n,kl,nl->nk', dS, massloc, udir[nodes])
         np.add.at(b, nodes, r)
@@ -125,9 +125,9 @@ class P1(p1general.P1general):
         massloc = tools.barycentric.tensor(d=dim - 1, k=2)
         massloc = np.diag(np.sum(massloc,axis=1))
         faces = self.mesh.bdryFaces(colorsdir)
-        nodes, cells, normalsS = self.mesh.faces[faces], self.mesh.cellsOfFaces[faces,0], self.mesh.normals[faces,:dim]
+        nodes, cells, normalsS = self.mesh.faces[faces], self.mesh.cells_of_faces[faces,0], self.mesh.normals[faces,:dim]
         dS = linalg.norm(normalsS, axis=1)
-        simp, dV = self.mesh.cells[cells], self.mesh.dV[cells]
+        simp, dV = self.mesh.cells[cells], self.mesh.cell_volumes[cells]
         dS *= nitsche_param * diffcoff[cells] * dS / dV
         r = np.einsum('n,kl,nl->nk', dS, massloc, u[nodes])
         np.add.at(du, nodes, r)
@@ -140,10 +140,10 @@ class P1(p1general.P1general):
     def computeMatrixNitscheDiffusion(self, nitsche_param, diffcoff, colors, coeff=1, lumped=False):
         nnodes, ncells, dim, nlocal  = self.mesh.nnodes, self.mesh.ncells, self.mesh.dimension, self.nlocal()
         faces = self.mesh.bdryFaces(colors)
-        cells = self.mesh.cellsOfFaces[faces, 0]
+        cells = self.mesh.cells_of_faces[faces, 0]
         normalsS = self.mesh.normals[faces, :dim]
         dS = np.linalg.norm(normalsS, axis=1)
-        dV = self.mesh.dV[cells]
+        dV = self.mesh.cell_volumes[cells]
         cellgrads = self.cellgrads[cells, :, :dim]
         simp = self.mesh.cells[cells]
         facenodes = self.mesh.faces[faces]
@@ -172,13 +172,13 @@ class P1(p1general.P1general):
             normalsS = self.mesh.normals[faces,:dim]
             dS = linalg.norm(normalsS, axis=1)
             nodes = self.mesh.faces[faces]
-            cells = self.mesh.cellsOfFaces[faces,0]
+            cells = self.mesh.cells_of_faces[faces,0]
             simp = self.mesh.cells[cells]
             cellgrads = self.cellgrads[cells, :, :dim]
-            dV = self.mesh.dV[cells]
+            dV = self.mesh.cell_volumes[cells]
             flux[i] = np.einsum('nj,n,ni,nji->', u[simp], diffcoff[cells], normalsS, cellgrads)
             uD = u[nodes]-udir[nodes]
-            dV = self.mesh.dV[cells]
+            dV = self.mesh.cell_volumes[cells]
             flux[i] -= np.einsum('n,kl,nl->', nitsche_param * diffcoff[cells] * dS**2 / dV, massloc, uD)
             # flux[i] /= np.sum(dS)
         return flux
@@ -215,7 +215,7 @@ class P1(p1general.P1general):
     # matrices
     def masslocal(self): return tools.barycentric.tensor(d=self.mesh.dimension, k=2)
     def computeMassMatrix(self, coeff=1, lumped=False):
-        dim, dV, nnodes = self.mesh.dimension, self.mesh.dV, self.mesh.nnodes
+        dim, dV, nnodes = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.nnodes
         if lumped:
             mass = coeff/(dim+1)*dV.repeat(dim+1)
             rows = self.mesh.cells.ravel()
@@ -254,8 +254,8 @@ class P1(p1general.P1general):
         A =  self.computeMatrixTransportCellWise(data, type='centered')
         return tools.checkmmatrix.diffusionForMMatrix(A)
     def computeMatrixTransportUpwindSides(self, data):
-        nnodes, nfaces, ncells, dim, dV = self.mesh.nnodes, self.mesh.nfaces, self.mesh.ncells, self.mesh.dimension, self.mesh.dV
-        normalsS, cof, simp = self.mesh.normals, self.mesh.cellsOfFaces, self.mesh.cells
+        nnodes, nfaces, ncells, dim, dV = self.mesh.nnodes, self.mesh.nfaces, self.mesh.ncells, self.mesh.dimension, self.mesh.cell_volumes
+        normalsS, cof, simp = self.mesh.normals, self.mesh.cells_of_faces, self.mesh.cells
         dbS = linalg.norm(normalsS, axis=1)*data.betart/dim/(dim+1)
         innerfaces = self.mesh.innerfaces
         infaces = np.arange(nfaces)[innerfaces]
@@ -269,7 +269,7 @@ class P1(p1general.P1general):
         A = sparse.coo_matrix((mat, (rows1, cols)), shape=(nnodes, nnodes))
         A -= sparse.coo_matrix((mat, (rows0, cols)), shape=(nnodes, nnodes))
         faces = self.mesh.bdryFaces()
-        ci0 = self.mesh.cellsOfFaces[faces, 0]
+        ci0 = self.mesh.cells_of_faces[faces, 0]
         rows0 = np.repeat(simp[ci0],dim).ravel()
         cols = np.tile(self.mesh.faces[infaces], dim + 1).ravel()
         mat = np.einsum('n,kl->nkl', dbS[faces], matloc).ravel()
@@ -333,17 +333,17 @@ class P1(p1general.P1general):
         if type=='centered':
             beta, mus = data.betacell, np.full(dim+1,1.0/(dim+1))
             # print(f"{beta=} {data=}")
-            mat = np.einsum('n,njk,nk,i -> nij', self.mesh.dV, self.cellgrads[:,:,:dim], beta, mus)
+            mat = np.einsum('n,njk,nk,i -> nij', self.mesh.cell_volumes, self.cellgrads[:,:,:dim], beta, mus)
             A =  sparse.coo_matrix((mat.ravel(), (self.rows, self.cols)), shape=(nnodes, nnodes)).tocsr()
         elif type=='supg':
             beta, mus = data.betacell, data.md.mus
-            mat = np.einsum('n,njk,nk,ni -> nij', self.mesh.dV, self.cellgrads[:,:,:dim], beta, mus)
+            mat = np.einsum('n,njk,nk,ni -> nij', self.mesh.cell_volumes, self.cellgrads[:,:,:dim], beta, mus)
             A =  sparse.coo_matrix((mat.ravel(), (self.rows, self.cols)), shape=(nnodes, nnodes)).tocsr()
         else: raise ValueError(f"unknown type {type=}")
         A -= self.computeBdryMassMatrix(coeff=np.minimum(data.betart, 0), lumped=True)
         return A
     def computeMassMatrixSupg(self, xd, data, coeff=1):
-        dim, dV, nnodes, xK = self.mesh.dimension, self.mesh.dV, self.mesh.nnodes, self.mesh.pointsc
+        dim, dV, nnodes, xK = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.nnodes, self.mesh.cell_centers
         massloc = tools.barycentric.tensor(d=dim, k=2)
         mass = np.einsum('n,ij->nij', coeff*dV, massloc)
         massloc = tools.barycentric.tensor(d=dim, k=1)
@@ -354,25 +354,25 @@ class P1(p1general.P1general):
     # dotmat
     def formDiffusion(self, du, u, coeff):
         graduh = np.einsum('nij,ni->nj', self.cellgrads, u[self.mesh.cells])
-        graduh = np.einsum('ni,n->ni', graduh, self.mesh.dV*coeff)
+        graduh = np.einsum('ni,n->ni', graduh, self.mesh.cell_volumes*coeff)
         # du += np.einsum('nj,nij->ni', graduh, self.cellgrads)
         raise ValueError(f"graduh {graduh.shape} {du.shape}")
         return du
     def massDotCell(self, b, f, coeff=1):
         assert f.shape[0] == self.mesh.ncells
-        dimension, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.dV
+        dimension, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.cell_volumes
         massloc = 1/(dimension+1)
         np.add.at(b, simplices, (massloc*coeff*dV*f)[:, np.newaxis])
         return b
     def massDot(self, b, f, coeff=1):
-        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.dV
+        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.cell_volumes
         massloc = tools.barycentric.tensor(d=dim, k=2)
         r = np.einsum('n,kl,nl->nk', coeff * dV, massloc, f[simplices])
         np.add.at(b, simplices, r)
         return b
     def massDotSupg(self, b, f, data, coeff=1):
         if self.params_str['convmethod'][:4] != 'supg': return
-        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.dV
+        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.cell_volumes
         r = np.einsum('n,nk,n->nk', coeff*dV, data.md.mus-1/(dim+1), f[simplices].mean(axis=1))
         np.add.at(b, simplices, r)
         return b
@@ -411,8 +411,8 @@ class P1(p1general.P1general):
             for label, fct in rhscell.items():
                 if fct is None: continue
                 cells = self.mesh.cellsoflabel[label]
-                xc, yc, zc = self.mesh.pointsc[cells].T
-                bC = scale * fct(xc, yc, zc) * self.mesh.dV[cells]
+                xc, yc, zc = self.mesh.cell_centers[cells].T
+                bC = scale * fct(xc, yc, zc) * self.mesh.cell_volumes[cells]
                 # print("bC", bC)
                 np.add.at(b, self.mesh.cells[cells].T, bC)
         else:
@@ -438,7 +438,7 @@ class P1(p1general.P1general):
             dS = linalg.norm(normalsS,axis=1)
             normalsS = normalsS/dS[:,np.newaxis]
             assert(dS.shape[0] == len(faces))
-            xf, yf, zf = self.mesh.pointsf[faces].T
+            xf, yf, zf = self.mesh.face_centers[faces].T
             nx, ny, nz = normalsS.T
             bS = scale * bdryfct[color](xf, yf, zf, nx, ny, nz) * dS
             np.add.at(b, self.mesh.faces[faces].T, bS)
@@ -464,22 +464,22 @@ class P1(p1general.P1general):
         return b
     # postprocess
     def computeErrorL2Cell(self, solexact, uh):
-        xc, yc, zc = self.mesh.pointsc.T
+        xc, yc, zc = self.mesh.cell_centers.T
         ec = solexact(xc, yc, zc) - np.mean(uh[self.mesh.cells], axis=1)
-        return np.sqrt(np.sum(ec**2* self.mesh.dV)), ec
+        return np.sqrt(np.sum(ec**2* self.mesh.cell_volumes)), ec
     def computeErrorL2(self, solexact, uh):
         x, y, z = self.mesh.points.T
         en = solexact(x, y, z) - uh
         Men = np.zeros_like(en)
         return np.sqrt( np.dot(en, self.massDot(Men,en)) ), en
     def computeErrorFluxL2(self, solexact, uh, diffcell=None):
-        xc, yc, zc = self.mesh.pointsc.T
+        xc, yc, zc = self.mesh.cell_centers.T
         graduh = np.einsum('nij,ni->nj', self.cellgrads, uh[self.mesh.cells])
         errv = 0
         for i in range(self.mesh.dimension):
             solxi = solexact.d(i, xc, yc, zc)
-            if diffcell is None: errv += np.sum((solxi - graduh[:, i]) ** 2 * self.mesh.dV)
-            else: errv += np.sum( diffcell*(solxi-graduh[:,i])**2* self.mesh.dV)
+            if diffcell is None: errv += np.sum((solxi - graduh[:, i]) ** 2 * self.mesh.cell_volumes)
+            else: errv += np.sum( diffcell*(solxi-graduh[:,i])**2* self.mesh.cell_volumes)
         return np.sqrt(errv)
     def computeBdryMean(self, u, colors):
         mean, omega = np.zeros(len(colors)), np.zeros(len(colors))
@@ -492,7 +492,7 @@ class P1(p1general.P1general):
         return mean/omega
     def comuteFluxOnRobin(self, u, faces, dS, uR, cR):
         uhmean =  np.sum(dS * np.mean(u[self.mesh.faces[faces]], axis=1))
-        xf, yf, zf = self.mesh.pointsf[faces].T
+        xf, yf, zf = self.mesh.face_centers[faces].T
         nx, ny, nz = np.mean(self.mesh.normals[faces], axis=0)
         if uR:
             try:
@@ -546,7 +546,7 @@ class P1(p1general.P1general):
         up = np.empty(len(colors))
         for i, color in enumerate(colors):
             cells = self.mesh.cellsoflabel[color]
-            up[i] = np.sum(np.mean(u[self.mesh.cells[cells]],axis=1)*self.mesh.dV[cells])
+            up[i] = np.sum(np.mean(u[self.mesh.cells[cells]],axis=1)*self.mesh.cell_volumes[cells])
         return up
 
     def computeEstimatorJumpP1(self, uh, rhs_cell, diffcell=None):
@@ -569,8 +569,8 @@ class P1(p1general.P1general):
         flux = diffcell[:, None] * graduh
 
         # volume part: h_K^2 ||f||_K^2
-        hK = mesh.dV ** (1.0 / dim)
-        eta2 = hK ** 2 * rhs_cell ** 2 * mesh.dV
+        hK = mesh.cell_volumes ** (1.0 / dim)
+        eta2 = hK ** 2 * rhs_cell ** 2 * mesh.cell_volumes
 
         if not hasattr(mesh, "innerfaces"):
             mesh.constructInnerFaces()

@@ -33,7 +33,7 @@ class RT0():
         if len(f) != dim:
             raise TypeError(f"f needs {dim} components")
 
-        coords = self.mesh.pointsf[:, :dim].T
+        coords = self.mesh.face_centers[:, :dim].T
         nfaces = self.mesh.nfaces
 
         fa = np.vstack([
@@ -52,30 +52,30 @@ class RT0():
             return np.einsum('ni, in -> n', nnormals, v.reshape(dim, nfaces))
         return np.einsum('ni, ni -> n', nnormals, v.reshape(nfaces,dim))
     def toCellMatrix(self):
-        ncells, nfaces, normals, sigma, facesofcells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.facesOfCells
-        dim, dV, p, pc, simp = self.mesh.dimension, self.mesh.dV, self.mesh.points, self.mesh.pointsc, self.mesh.cells
-        dS = sigma * linalg.norm(normals[facesofcells], axis=2)/dim
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
+        dim, dV, p, pc, simp = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers, self.mesh.cells
+        dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)/dim
         mat = np.einsum('ni, nij, n->jni', dS, pc[:,np.newaxis,:dim]-p[simp,:dim], 1/dV)
         rows = np.repeat((np.repeat(dim * np.arange(ncells), dim).reshape(ncells,dim) + np.arange(dim)).swapaxes(1,0),dim+1)
-        cols = np.tile(facesofcells.ravel(), dim)
+        cols = np.tile(faces_of_cells.ravel(), dim)
         return  sparse.coo_matrix((mat.ravel(), (rows.ravel(), cols.ravel())), shape=(dim*ncells, nfaces))
     def toCell(self, v):
-        ncells, nfaces, normals, sigma, facesofcells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.facesOfCells
-        dim, dV, p, pc, simp = self.mesh.dimension, self.mesh.dV, self.mesh.points, self.mesh.pointsc, self.mesh.cells
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
+        dim, dV, p, pc, simp = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers, self.mesh.cells
         dS2 = linalg.norm(normals, axis=1)
         sigma2 = sigma/dV[:,np.newaxis]/dim
-        return np.einsum('ni,ni,nij,ni -> nj', v[facesofcells], sigma2, pc[:,np.newaxis,:dim]-p[simp,:dim], dS2[facesofcells])
+        return np.einsum('ni,ni,nij,ni -> nj', v[faces_of_cells], sigma2, pc[:,np.newaxis,:dim]-p[simp,:dim], dS2[faces_of_cells])
     def constructMass(self, massproj = 'standard', diffinvcell=None):
-        ncells, nfaces, normals, sigma, facesofcells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.facesOfCells
-        dim, dV, nloc, simp = self.mesh.dimension, self.mesh.dV, self.mesh.dimension+1, self.mesh.cells
-        p, pc, pf = self.mesh.points, self.mesh.pointsc, self.mesh.pointsf
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
+        dim, dV, nloc, simp = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.dimension+1, self.mesh.cells
+        p, pc, pf = self.mesh.points, self.mesh.cell_centers, self.mesh.face_centers
         # massproj = self.params_str['massproj']
         if massproj == 'standard':
             # RT
             scalea = 1 / dim / dim / (dim + 2) / (dim + 1)
             scaleb = 1 / dim / dim / (dim + 2) * (dim + 1)
             scalec = 1 / dim / dim
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
             x1 = scalea *np.einsum('nij,nij->n', p[simp], p[simp]) + scaleb* np.einsum('ni,ni->n', pc, pc)
             x2 = scalec *np.einsum('nik,njk->nij', p[simp], p[simp])
             x3 = - scalec * np.einsum('nik,nk->ni', p[simp], pc)
@@ -87,51 +87,51 @@ class RT0():
                 mat = np.einsum("nij, n -> nij", mat, 1/dV)
             else:
                 mat = np.einsum("nij, n -> nij", mat, diffinvcell / dV  )
-            rows = np.repeat(facesofcells, nloc).ravel()
-            cols = np.tile(facesofcells, nloc).ravel()
+            rows = np.repeat(faces_of_cells, nloc).ravel()
+            cols = np.tile(faces_of_cells, nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces)).tocsr()
             # print("A (RT)", A)
             return A
 
         elif massproj=="L2":
             # RT avec projection L2
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)/dim
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)/dim
             ps = p[simp][:,:,:dim]
             ps2 = np.transpose(ps, axes=(2,0,1))
             pc2 = np.repeat(pc[:,:dim].T[:, :, np.newaxis], nloc, axis=2)
             pd = pc2 -ps2
             mat = np.einsum('kni,knj, ni, nj, n->nij', pd, pd, dS, dS, diffinvcell / dV)
-            rows = np.repeat(facesofcells, self.nloc).ravel()
-            cols = np.tile(facesofcells, self.nloc).ravel()
+            rows = np.repeat(faces_of_cells, self.nloc).ravel()
+            cols = np.tile(faces_of_cells, self.nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces)).tocsr()
             # print("A (RTM)", A)
             return A
         elif massproj == "RT_Bar":
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
             scale = 1/ (dim+1)
             scale = 2/9
             mat = np.einsum('ni, nj, n->nij', -dS, 1/dS, dV)
             mat.reshape( ( mat.shape[0], (dim+1)**2) ) [:,::dim+2] *= -dim
             mat *= scale
-            rows = np.repeat(facesofcells, self.nloc).ravel()
-            cols = np.tile(facesofcells, self.nloc).ravel()
+            rows = np.repeat(faces_of_cells, self.nloc).ravel()
+            cols = np.tile(faces_of_cells, self.nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces))
             return A.tocsr()
         elif massproj == "Bar_RT":
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
             scale = 1/ (dim+1)
             scale = 2/9
             mat = np.einsum('ni, nj, n->nij', -dS, 1/dS, dV)
             mat.reshape( ( mat.shape[0], (dim+1)**2) ) [:,::dim+2] *= -dim
             mat *= scale
-            rows = np.repeat(facesofcells, self.nloc).ravel()
-            cols = np.tile(facesofcells, self.nloc).ravel()
+            rows = np.repeat(faces_of_cells, self.nloc).ravel()
+            cols = np.tile(faces_of_cells, self.nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces))
             return A.tocsr().T
 
         elif massproj == "Hat_RT":
             # PG de type RT-Hat (Hat aligned with "m")
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
             ps = p[simp][:, :, :dim]
             ps2 = np.transpose(ps, axes=(2, 0, 1))
             pc2 = np.repeat(pc[:, :dim].T[:, :, np.newaxis], nloc, axis=2)
@@ -141,13 +141,13 @@ class RT0():
             # pas la si projection L2
             # mat += np.einsum('kni, kni, ni, nj, n->nij', pd, pd, dS, dS, dim / (dim + 2) / dV)
             mat *= scale
-            rows = np.repeat(facesofcells, self.nloc).ravel()
-            cols = np.tile(facesofcells, self.nloc).ravel()
+            rows = np.repeat(faces_of_cells, self.nloc).ravel()
+            cols = np.tile(faces_of_cells, self.nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces))
             return A.tocsr().T
 
         elif massproj == "Hat_Hat":
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
             ps = p[simp][:, :, :dim]
             ps2 = np.transpose(ps, axes=(2, 0, 1))
             pc2 = np.repeat(pc[:, :dim].T[:, :, np.newaxis], nloc, axis=2)
@@ -157,27 +157,27 @@ class RT0():
             scale = (dim+1) / (dim+2) / dim**2
             mat = np.einsum('kni, knj, ij, ni, nj, n->nij', pd, pd, mloc, dS, dS, 1 / dV)
             mat *= scale
-            rows = np.repeat(facesofcells, self.nloc).ravel()
-            cols = np.tile(facesofcells, self.nloc).ravel()
+            rows = np.repeat(faces_of_cells, self.nloc).ravel()
+            cols = np.tile(faces_of_cells, self.nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces))
             return A.tocsr()
 
         elif massproj=="RT_Tilde":
             # PG de type RT-Tilde (Hat aligned with "n")
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
-            dT = 1/linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
+            dT = 1/linalg.norm(normals[faces_of_cells], axis=2)
             ps = p[simp][:, :, :dim]
             ps2 = np.transpose(ps, axes=(2, 0, 1))
             pc2 = np.repeat(pc[:, :dim].T[:, :, np.newaxis], nloc, axis=2)
             pd = pc2 - ps2
-            pn = np.transpose(normals[facesofcells][:,:,:dim], axes=(2,0,1))
+            pn = np.transpose(normals[faces_of_cells][:,:,:dim], axes=(2,0,1))
             # multiplié par dim !
             scale = dim / dim / (dim+1)
             mat = np.einsum('kni, knj, ni, nj, n->nij', pn, pd, dT, dS, diffinvcell)
             mat += np.einsum('kni, kni, ni, nj, n->nij', pn, pd, dT, dS, dim/(dim+2) *diffinvcell)
             mat *= scale
-            rows = np.repeat(facesofcells, self.nloc).ravel()
-            cols = np.tile(facesofcells, self.nloc).ravel()
+            rows = np.repeat(faces_of_cells, self.nloc).ravel()
+            cols = np.tile(faces_of_cells, self.nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces)).tocsr()
             # A[np.abs(A)<1e-10] = 0
             # A.eliminate_zeros()
@@ -186,68 +186,68 @@ class RT0():
 
         elif massproj=="Tilde_RT":
             # PG de type RT-Tilde (Hat aligned with "n")
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
-            dT = 1/linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
+            dT = 1/linalg.norm(normals[faces_of_cells], axis=2)
             ps = p[simp][:, :, :dim]
             ps2 = np.transpose(ps, axes=(2, 0, 1))
             pc2 = np.repeat(pc[:, :dim].T[:, :, np.newaxis], nloc, axis=2)
             pd = pc2 - ps2
-            pn = np.transpose(normals[facesofcells][:,:,:dim], axes=(2,0,1))
+            pn = np.transpose(normals[faces_of_cells][:,:,:dim], axes=(2,0,1))
             # multiplié par d !
             scale = dim / dim / (dim+1)
             mat = np.einsum('kni, knj, ni, nj, n->nji', pn, pd, dT, dS, diffinvcell)
             mat += np.einsum('kni, kni, ni, nj, n->nji', pn, pd, dT, dS, dim/(dim+2) *diffinvcell)
             mat *= scale
-            rows = np.repeat(facesofcells, self.nloc).ravel()
-            cols = np.tile(facesofcells, self.nloc).ravel()
+            rows = np.repeat(faces_of_cells, self.nloc).ravel()
+            cols = np.tile(faces_of_cells, self.nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces))
             return A.tocsr().T
 
         elif massproj=="HatxRTOLD":
             # PG de type Tilde-RT
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
             ps = p[simp][:, :, :dim]
             ps2 = np.transpose(ps, axes=(2, 0, 1))
             pc2 = np.repeat(pc[:, :dim].T[:, :, np.newaxis], nloc, axis=2)
             pd = pc2 - ps2
-            pf2 = pf[facesofcells][:, :, :dim]
+            pf2 = pf[faces_of_cells][:, :, :dim]
             scale = 1 / dim / dim
             mat = np.einsum('kni, nik, nj, ni, n->nij', pd, pf2, dS, dS, 1 / dV)
             mat -= np.einsum('kni, njk, nj, ni, n->nij', pd, ps, dS, dS, 1 / dV)
             mat *= scale
-            rows = np.repeat(facesofcells, self.nloc).ravel()
-            cols = np.tile(facesofcells, self.nloc).ravel()
+            rows = np.repeat(faces_of_cells, self.nloc).ravel()
+            cols = np.tile(faces_of_cells, self.nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces)).tocsr()
             # print("A (HatxRT)", A)
             return A
 
         elif massproj=="RTxHatOLD":
             # PG de type RT-Hat (Hat aligned with "m")
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
             ps = p[simp][:, :, :dim]
             ps2 = np.transpose(ps, axes=(2, 0, 1))
             pc2 = np.repeat(pc[:, :dim].T[:, :, np.newaxis], nloc, axis=2)
             pd = pc2 - ps2
-            pf2 = pf[facesofcells][:, :, :dim]
+            pf2 = pf[faces_of_cells][:, :, :dim]
             scale = 1 / dim / dim
             mat = np.einsum('kni, nik, nj, ni, n->nij', pd, pf2, dS, dS, 1 / dV)
             mat -= np.einsum('kni, njk, nj, ni, n->nij', pd, ps, dS, dS, 1 / dV)
             mat *= scale
-            rows = np.repeat(facesofcells, self.nloc).ravel()
-            cols = np.tile(facesofcells, self.nloc).ravel()
+            rows = np.repeat(faces_of_cells, self.nloc).ravel()
+            cols = np.tile(faces_of_cells, self.nloc).ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, cols)), shape=(nfaces, nfaces))
             return A.T.tocsr()
 
         elif massproj=="HatxHatOLD":
             # G de type Tilde-Tilde
-            dS = sigma * linalg.norm(normals[facesofcells], axis=2)
+            dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)
             ps = p[simp][:, :, :dim]
             ps2 = np.transpose(ps, axes=(2, 0, 1))
             pc2 = np.repeat(pc[:, :dim].T[:, :, np.newaxis], nloc, axis=2)
             pd = pc2 - ps2
             scale = (dim + 1) / dim**3
             mat = scale * np.einsum('ni, ni, kni, kni, n->ni', dS, dS, pd, pd, diffinvcell / dV)
-            rows = facesofcells.ravel()
+            rows = faces_of_cells.ravel()
             A = sparse.coo_matrix((mat.ravel(), (rows, rows)), shape=(nfaces, nfaces)).tocsr()
             # print("A", A)
             return A
@@ -255,11 +255,11 @@ class RT0():
         else:
             raise ValueError(f"unknown type {massproj=}")
     def constructDiv(self):
-        ncells, nfaces, normals, sigma, facesofcells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.facesOfCells
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
         nloc = self.mesh.dimension+1
         rows = np.repeat(np.arange(ncells), nloc)
-        cols = facesofcells.ravel()
-        mat =  (sigma*linalg.norm(normals[facesofcells],axis=2)).ravel()
+        cols = faces_of_cells.ravel()
+        mat =  (sigma*linalg.norm(normals[faces_of_cells],axis=2)).ravel()
         return  sparse.coo_matrix((mat, (rows, cols)), shape=(ncells, nfaces)).tocsr()
     def reconstruct(self, p, vc, diffinv):
         nnodes, ncells, dim, simp = self.mesh.nnodes, self.mesh.ncells, self.mesh.dimension, self.mesh.cells
@@ -269,7 +269,7 @@ class RT0():
         counts = np.bincount(simp.reshape(-1).astype(int))
         # print(f"{counts=}")
         pn2 = np.zeros(nnodes)
-        xdiff = self.mesh.points[simp, :dim] - self.mesh.pointsc[:, np.newaxis,:dim]
+        xdiff = self.mesh.points[simp, :dim] - self.mesh.cell_centers[:, np.newaxis,:dim]
         # rows = np.repeat(simp,dim)
         # cols = np.repeat(dim*np.arange(ncells),dim*(dim+1)).reshape(ncells * (dim+1), dim) + np.arange(dim)
         # mat = np.einsum("nij, n -> nij", xdiff, diffinv)

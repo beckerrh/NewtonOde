@@ -121,7 +121,7 @@ class Model(object):
             fct = np.vectorize(params.fct_glob[name])
             arr = np.empty(self.mesh.ncells)
             for color, cells in self.mesh.cellsoflabel.items():
-                xc, yc, zc = self.mesh.pointsc[cells].T
+                xc, yc, zc = self.mesh.cell_centers[cells].T
                 arr[cells] = fct(color, xc, yc, zc)
         elif name in params.scal_glob:
             arr = np.full(self.mesh.ncells, params.scal_glob[name])

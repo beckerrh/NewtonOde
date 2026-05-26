@@ -8,7 +8,7 @@ sys.path.insert(0, str(root))
 
 from FEM2D.models.elliptic import Elliptic
 from FEM2D.models.application import Application
-from FEM2D.mesh import marking, refinement_nvb
+from FEM2D.mesh import marking
 from Utility import timer
 
 # define Application class
@@ -49,29 +49,36 @@ linearsolver = {'method':'pyamg', 'disp':1}
 # linearsolver = "spsolve"
 heat = Elliptic(application=HeatExample(), fem='p1', disc_params=disc_params, linearsolver=linearsolver)
 
-timer = timer.Timer()
+plotting = False
+mesh_timer = timer.Timer()
 for ell in range(10):
-    with heat.timer(f"AFEM{ell:02d}: solve"):
-        result, u = heat.static(method="linear")
-    print(f"{result.info=}")
-    for k, v in result.data['scalar'].items():
-        print(f"{k:20s} : {v}")
-    eta = result.data['cell']['eta']
-    with heat.timer(f"AFEM{ell:02d}: plot"):
-        fig = plt.figure(figsize=(10, 8))
-        fig.suptitle(f"{heat.application.__class__.__name__} nn={heat.mesh.nnodes:7d} ({ell=} )", fontsize=16)
-        outer = gridspec.GridSpec(1, 2, wspace=0.2, hspace=0.2)
-        heat.mesh.plot(fig=fig, outer=outer[0], bdry=True)
-        data = u.tovisudata()
-        data.setdefault("cell", {})
-        data["cell"]["k"] = heat.kheatcell
-        data["cell"]["eta"] = eta
-        heat.mesh.plot(data=data, alpha=0.5, fig=fig, outer=outer[1])
-        plt.show()
-    with heat.timer(f"AFEM{ell:02d}: marking"):
-        marked = marking.dorfler_marking(eta, theta=0.75)
-    with heat.timer(f"AFEM{ell:02d}: refine"):
-        mesh2 = refinement_nvb.refine_nvb(heat.mesh, marked, method="NVB3", debug=True)
-    with heat.timer(f"AFEM{ell:02d}: setMesh"):
-        heat.setMesh(mesh2)  # mandatory: rebuild fems, bdry data, coefficients, matrix cache
-print(result.info['timer'].summary())
+    with heat.timer.scope(f"AFEM{ell:02d}"):
+
+        with heat.timer("solve"):
+            result, u = heat.static(method="linear")
+        print(f"{result.info=}")
+        for k, v in result.data['scalar'].items():
+            print(f"{k:20s} : {v}")
+        eta = result.data['cell']['eta']
+        if plotting:
+            with heat.timer("plot"):
+                fig = plt.figure(figsize=(10, 8))
+                fig.suptitle(f"{heat.application.__class__.__name__} nn={heat.mesh.nnodes:7d} ({ell=} )", fontsize=16)
+                outer = gridspec.GridSpec(1, 2, wspace=0.2, hspace=0.2)
+                heat.mesh.plot(fig=fig, outer=outer[0], bdry=True)
+                data = u.tovisudata()
+                data.setdefault("cell", {})
+                data["cell"]["k"] = heat.kheatcell
+                data["cell"]["eta"] = eta
+                heat.mesh.plot(data=data, alpha=0.5, fig=fig, outer=outer[1])
+                plt.show()
+        with heat.timer("marking"):
+            marked = marking.dorfler_marking(eta, theta=0.75)
+        with heat.timer("refine"):
+            with heat.timer("refine"):
+                mesh2 = heat.mesh.refine_nvb(marked, timer=mesh_timer, debug=False)
+        with heat.timer("setMesh"):
+            heat.setMesh(mesh2)  # mandatory: rebuild fems, bdry data, coefficients, matrix cache
+print(result.info['timer'].summary()+'\n')
+print(heat.timer.summary_by_leaf()+'\n')
+print(mesh_timer.summary_by_leaf())

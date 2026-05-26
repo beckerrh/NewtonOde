@@ -11,13 +11,11 @@ class SimplexMesh:
     Simplicial mesh container.
 
     Public compatibility attributes kept:
-        cells, facesOfCells, cellsOfFaces, pointsc, pointsf, dV
+        cells, faces_of_cells, cells_of_faces, pointsc, pointsf, dV
         bdrylabels, cellsoflabel, linesoflabel, verticesoflabel
     """
 
     def __init__(self, points, cells=None, *, labels=None):
-        self.timer = timer.Timer()
-
         # Backward compatibility:
         # old code used SimplexMesh(meshio_mesh)
         if cells is None:
@@ -59,41 +57,47 @@ class SimplexMesh:
         from .meshio_io import from_meshio
         return from_meshio(mesh)
 
-    def _rebuild(self):
-        topology.construct_faces_from_cells(self)
-        with self.timer("construct_faces_from_cells"):
-            self.ncells = self.cells.shape[0]
-            self.nfaces = self.faces.shape[0]
-            geometry.construct_centers(self)
-            geometry.construct_normals_and_volumes(self)
-        with self.timer("construct_geometry"):
-            topology.construct_inner_faces(self)
-            self._set_compatibility_aliases()
+    def refine_nvb(self, marked, debug=False, timer=None):
+        from FEM2D.mesh import refinement_nvb
 
-    def _set_compatibility_aliases(self):
-        self.facesOfCells = self.faces_of_cells
-        self.cellsOfFaces = self.cells_of_faces
-        self.pointsc = self.cell_centers
-        self.pointsf = self.face_centers
-        self.dV = self.cell_volumes
+        return refinement_nvb.refine_nvb(
+            self,
+            marked,
+            debug=debug,
+            timer=timer,
+        )
 
-    def finalize_after_topology_change(self):
+    def finalize_after_topology_change(self, timer):
+        from contextlib import nullcontext
         self.points = np.asarray(self.points)
         self.cells = np.asarray(self.cells, dtype=int)
         self.nnodes = self.points.shape[0]
         self.ncells = self.cells.shape[0]
+        with timer("rebuild") if timer else nullcontext():
+            self._rebuild(timer=timer)
 
-        self._rebuild()
+        with timer("celllabels") if timer else nullcontext():
+            if hasattr(self, "celllabels"):
+                self.cellsoflabel = {}
+                for icell, label in enumerate(self.celllabels):
+                    self.cellsoflabel.setdefault(label, []).append(icell)
+                self.cellsoflabel = {
+                    label: np.asarray(ids, dtype=int)
+                    for label, ids in self.cellsoflabel.items()
+                }
 
-        if hasattr(self, "celllabels"):
-            self.cellsoflabel = {}
-            for icell, label in enumerate(self.celllabels):
-                self.cellsoflabel.setdefault(label, []).append(icell)
+    def _rebuild(self, timer=None):
+        from contextlib import nullcontext
+        with timer("construct_faces_from_cells") if timer else nullcontext():
+            topology.construct_faces_from_cells(self)
+        with timer("construct_centers_normals_volumes") if timer else nullcontext():
+            self.ncells = self.cells.shape[0]
+            self.nfaces = self.faces.shape[0]
+            geometry.construct_centers(self)
+            geometry.construct_normals_and_volumes(self)
+        with timer("construct_inner_faces") if timer else nullcontext():
+            topology.construct_inner_faces(self)
 
-            self.cellsoflabel = {
-                label: np.asarray(ids, dtype=int)
-                for label, ids in self.cellsoflabel.items()
-            }
     def check(self):
         used = np.unique(self.cells)
         if len(used) != self.nnodes:
@@ -124,15 +128,15 @@ class SimplexMesh:
             faces[pos[i]:pos[i + 1]] = self.bdrylabels[color]
         return faces
 
-    def facesOfCellsNotOnInnerFaces(self, ci0, ci1):
+    def faces_of_cellsNotOnInnerFaces(self, ci0, ci1):
         faces = self.faces[self.innerfaces]
         fi0_bis = np.empty_like(faces)
         fi1_bis = np.empty_like(faces)
         for i in range(faces.shape[1]):
-            fi0_bis[:, i] = self.facesOfCells[ci0][
+            fi0_bis[:, i] = self.faces_of_cells[ci0][
                 self.cells[ci0] == faces[:, i][:, None]
             ]
-            fi1_bis[:, i] = self.facesOfCells[ci1][
+            fi1_bis[:, i] = self.faces_of_cells[ci1][
                 self.cells[ci1] == faces[:, i][:, None]
             ]
         return fi0_bis, fi1_bis

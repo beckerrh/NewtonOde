@@ -47,41 +47,58 @@ def construct_faces_from_cells(mesh):
 
     faces_of_cells[cellindex[perm], locindex[perm]] = indices
 
-    unique, indices_unique = np.unique(faces_of_cells, return_index=True)
-    assert np.all(unique == np.arange(faces.shape[0]))
+    # unique, indices_unique = np.unique(faces_of_cells, return_index=True)
+    # assert np.all(unique == np.arange(faces.shape[0]))
+    #
+    # i0, i1 = np.unravel_index(indices_unique, shape=faces_of_cells.shape)
+    #
+    # foc = faces_of_cells.copy()
+    # foc[i0, i1] = -1
+    #
+    # unique2, indices2 = np.unique(foc, return_index=True)
+    # i2, _ = np.unravel_index(indices2[1:], shape=foc.shape)
+    #
+    # second_cell = -np.ones(faces.shape[0], dtype=np.int64)
+    # second_cell[unique2[1:]] = i2
+    #
+    # mesh.faces = faces
+    # mesh.nfaces = faces.shape[0]
+    # mesh.faces_of_cells = faces_of_cells
+    # mesh.cells_of_faces = np.vstack([i0, second_cell]).T
 
-    i0, i1 = np.unravel_index(indices_unique, shape=faces_of_cells.shape)
+    flat_faces = faces_of_cells.ravel()
+    flat_cells = np.repeat(np.arange(ncells), nnpc)
 
-    foc = faces_of_cells.copy()
-    foc[i0, i1] = -1
+    order2 = np.argsort(flat_faces)
+    sf = flat_faces[order2]
+    sc = flat_cells[order2]
 
-    unique2, indices2 = np.unique(foc, return_index=True)
-    i2, _ = np.unravel_index(indices2[1:], shape=foc.shape)
+    counts = np.bincount(sf, minlength=faces.shape[0])
+    starts = np.r_[0, np.cumsum(counts[:-1])]
 
+    first_cell = sc[starts]
     second_cell = -np.ones(faces.shape[0], dtype=np.int64)
-    second_cell[unique2[1:]] = i2
 
+    mask = counts == 2
+    second_cell[mask] = sc[starts[mask] + 1]
+
+    mesh.cells_of_faces = np.vstack([first_cell, second_cell]).T
     mesh.faces = faces
     mesh.nfaces = faces.shape[0]
     mesh.faces_of_cells = faces_of_cells
-    mesh.cells_of_faces = np.vstack([i0, second_cell]).T
 
-    # old aliases
-    mesh.facesOfCells = mesh.faces_of_cells
-    mesh.cellsOfFaces = mesh.cells_of_faces
-
-    if mesh.dimension == 2:
-        for ic, (v0, v1, v2) in enumerate(cells):
-            expected = [
-                tuple(sorted((v1, v2))),
-                tuple(sorted((v2, v0))),
-                tuple(sorted((v0, v1))),
-            ]
-            for iloc in range(3):
-                f = faces_of_cells[ic, iloc]
-                got = tuple(mesh.faces[f])
-                if got != expected[iloc]:
-                    raise RuntimeError(
-                        f"bad local face order: cell={ic}, iloc={iloc}, "
-                        f"got={got}, expected={expected[iloc]}"
-                    )
+    # if mesh.dimension == 2:
+    #     for ic, (v0, v1, v2) in enumerate(cells):
+    #         expected = [
+    #             tuple(sorted((v1, v2))),
+    #             tuple(sorted((v2, v0))),
+    #             tuple(sorted((v0, v1))),
+    #         ]
+    #         for iloc in range(3):
+    #             f = faces_of_cells[ic, iloc]
+    #             got = tuple(mesh.faces[f])
+    #             if got != expected[iloc]:
+    #                 raise RuntimeError(
+    #                     f"bad local face order: cell={ic}, iloc={iloc}, "
+    #                     f"got={got}, expected={expected[iloc]}"
+    #                 )
