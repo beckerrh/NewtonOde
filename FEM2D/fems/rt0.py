@@ -290,7 +290,7 @@ class RT0():
         cols = np.empty(shape=(0), dtype=int)
         mat = np.empty(shape=(0), dtype=float)
         for color in colors:
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             cols = np.append(cols, faces)
@@ -303,7 +303,7 @@ class RT0():
         bdrydata = fems.data.BdryData()
         bdrydata.facesneumann = np.empty(shape=(0), dtype=int)
         for color in colorsneumann:
-            bdrydata.facesneumann = np.unique(np.union1d(bdrydata.facesneumann, self.mesh.bdrylabels[color]))
+            bdrydata.facesneumann = np.unique(np.union1d(bdrydata.facesneumann, self.mesh.labels.boundary[color]))
         bdrydata.facesinner = np.setdiff1d(np.arange(self.mesh.nfaces, dtype=int), bdrydata.facesneumann)
         return bdrydata
     def matrixNeumann(self, A, B, bdrydata):

@@ -95,21 +95,21 @@ class EllipticBase(Model):
             colorsdir = self.problemdata.bdrycond.colorsOfType("Dirichlet")
             # print("betart shape", self.convdata.betart.shape)
             # print("nfaces", self.mesh.nfaces)
-            # print("bdrylabels", {c: faces.tolist() for c, faces in self.mesh.bdrylabels.items()})
+            # print("bdrylabels", {c: faces.tolist() for c, faces in self.mesh.labels.boundary.items()})
             # print("colorsinflow", colorsinflow)
             # print("colorsdir", colorsdir)
             if not set(colorsinflow).issubset(set(colorsdir)):
                 raise ValueError(f"Inflow boundaries need to be subset of Dirichlet boundaries {colorsinflow=} {colorsdir=}")
     def findInflowColors(self):
         colors=[]
-        for color in self.mesh.bdrylabels.keys():
-            faces = self.mesh.bdrylabels[color]
+        for color in self.mesh.labels.boundary.keys():
+            faces = self.mesh.labels.boundary[color]
             if np.any(self.convdata.betart[faces]<-1e-10): colors.append(color)
         return colors
     def _checkProblemData(self):
         if self.verbose: print(f"checking problem data {self.problemdata=}")
         bdrycond = self.problemdata.bdrycond
-        for color in self.mesh.bdrylabels:
+        for color in self.mesh.labels.boundary:
             if not color in bdrycond.type: raise ValueError(f"color={color} not in bdrycond={bdrycond}")
             if bdrycond.type[color] in ["Robin"]:
                 if not color in bdrycond.param:

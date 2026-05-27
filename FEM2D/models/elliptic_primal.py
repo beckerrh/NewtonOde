@@ -89,7 +89,7 @@ class EllipticPrimal(EllipticBase):
         else:
             self.fem.vectorBoundaryStrong(b, bdrycond, self.bdrydata)
         if self.hasconvection:
-            # fp1 = self.fems.interpolateBoundary(self.mesh.bdrylabels.keys(), bdrycond.fct)
+            # fp1 = self.fems.interpolateBoundary(self.mesh.labels.boundary.keys(), bdrycond.fct)
             fp1 = self.fem.interpolateBoundary(colorsdir, bdrycond.fct)
             self.fem.massDotBoundary(b, fp1, coeff=-np.minimum(self.convdata.betart, 0))
         #Fourier-Robin

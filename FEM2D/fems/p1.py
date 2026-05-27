@@ -33,13 +33,13 @@ class P1(p1general.P1general):
         bdrydata.nodesdir={}
         bdrydata.nodedirall = np.empty(shape=(0), dtype=self.mesh.faces.dtype)
         for color in colorsdir:
-            facesdir = self.mesh.bdrylabels[color]
+            facesdir = self.mesh.labels.boundary[color]
             bdrydata.nodesdir[color] = np.unique(self.mesh.faces[facesdir].flat[:])
             bdrydata.nodedirall = np.unique(np.union1d(bdrydata.nodedirall, bdrydata.nodesdir[color]))
         bdrydata.nodesinner = np.setdiff1d(np.arange(self.mesh.nnodes, dtype=self.mesh.faces.dtype),bdrydata.nodedirall)
         bdrydata.nodesdirflux={}
         for color in colorsflux:
-            facesdir = self.mesh.bdrylabels[color]
+            facesdir = self.mesh.labels.boundary[color]
             bdrydata.nodesdirflux[color] = np.unique(self.mesh.faces[facesdir].ravel())
         return bdrydata
     def matrixBoundaryStrong(self, A, bdrydata, method = 'strong'):
@@ -168,7 +168,7 @@ class P1(p1general.P1general):
         massloc = barycentric.tensor(d=dim - 1, k=2)
         massloc = np.diag(np.sum(massloc,axis=1))
         for i,color in enumerate(colors):
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces,:dim]
             dS = linalg.norm(normalsS, axis=1)
             nodes = self.mesh.faces[faces]
@@ -198,7 +198,7 @@ class P1(p1general.P1general):
         #     raise ValueError(f"{type(f)=} {colors=} {len(f)=}")
         for color in colors:
             if not color in f or not f[color]: continue
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS,axis=1)
             normalsS = normalsS/dS[:,np.newaxis]
@@ -228,9 +228,9 @@ class P1(p1general.P1general):
         rows = np.empty(shape=(0), dtype=int)
         cols = np.empty(shape=(0), dtype=int)
         mat = np.empty(shape=(0), dtype=float)
-        if colors is None: colors = self.mesh.bdrylabels.keys()
+        if colors is None: colors = self.mesh.labels.boundary.keys()
         for color in colors:
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             if isinstance(coeff, dict):
                 dS = linalg.norm(normalsS, axis=1)*coeff[color]
@@ -377,9 +377,9 @@ class P1(p1general.P1general):
         np.add.at(b, simplices, r)
         return b
     def massDotBoundary(self, b=None, f=None, colors=None, coeff=1, lumped=False):
-        if colors is None: colors = self.mesh.bdrylabels.keys()
+        if colors is None: colors = self.mesh.labels.boundary.keys()
         for color in colors:
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             nodes = self.mesh.faces[faces]
@@ -406,11 +406,11 @@ class P1(p1general.P1general):
     def computeRhsCell(self, b, rhscell):
         if rhscell is None: return b
         if isinstance(rhscell,dict):
-            assert set(rhscell.keys())==set(self.mesh.cellsoflabel.keys())
+            assert set(rhscell.keys())==set(self.mesh.labels.cell.keys())
             scale = 1 / (self.mesh.dimension + 1)
             for label, fct in rhscell.items():
                 if fct is None: continue
-                cells = self.mesh.cellsoflabel[label]
+                cells = self.mesh.labels.cell[label]
                 xc, yc, zc = self.mesh.cell_centers[cells].T
                 bC = scale * fct(xc, yc, zc) * self.mesh.cell_volumes[cells]
                 # print("bC", bC)
@@ -423,7 +423,7 @@ class P1(p1general.P1general):
         if rhspoint is None: return b
         for label, fct in rhspoint.items():
             if fct is None: continue
-            points = self.mesh.verticesoflabel[label]
+            points = self.mesh.labels.vertex[label]
             xc, yc, zc = self.mesh.points[points].T
             # print("xc, yc, zc, f", xc, yc, zc, fct(xc, yc, zc))
             b[points] += fct(xc, yc, zc)
@@ -432,7 +432,7 @@ class P1(p1general.P1general):
         normals =  self.mesh.normals
         scale = 1 / self.mesh.dimension
         for color in colors:
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             if not color in bdryfct or bdryfct[color] is None: continue
             normalsS = normals[faces]
             dS = linalg.norm(normalsS,axis=1)
@@ -446,7 +446,7 @@ class P1(p1general.P1general):
     def computeRhsBoundaryMass(self, b, bdrycond, types, mass):
         normals =  self.mesh.normals
         help = np.zeros(self.mesh.nnodes)
-        for color, faces in self.mesh.bdrylabels.items():
+        for color, faces in self.mesh.labels.boundary.items():
             if bdrycond.type[color] not in types: continue
             if not color in bdrycond.fct or bdrycond.fct[color] is None: continue
             normalsS = normals[faces]
@@ -484,7 +484,7 @@ class P1(p1general.P1general):
     def computeBdryMean(self, u, colors):
         mean, omega = np.zeros(len(colors)), np.zeros(len(colors))
         for i,color in enumerate(colors):
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             omega[i] = np.sum(dS)
@@ -504,7 +504,7 @@ class P1(p1general.P1general):
     def computeBdryNormalFlux(self, u, colors, bdrydata, bdrycond, diffcoff):
         flux, omega = np.zeros(len(colors)), np.zeros(len(colors))
         for i,color in enumerate(colors):
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             omega[i] = np.sum(dS)
@@ -517,13 +517,13 @@ class P1(p1general.P1general):
     def computeBdryFct(self, u, colors):
         nodes = np.empty(shape=(0), dtype=int)
         for color in colors:
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             nodes = np.unique(np.union1d(nodes, self.mesh.faces[faces].ravel()))
         return self.mesh.points[nodes], u[nodes]
     def computePointValues(self, u, colors):
         up = np.empty(len(colors))
         for i,color in enumerate(colors):
-            nodes = self.mesh.verticesoflabel[color]
+            nodes = self.mesh.labels.vertex[color]
             # print(f"{nodes=} {self.mesh.points[nodes]=}")
             up[i] = u[nodes]
         return up
@@ -531,7 +531,7 @@ class P1(p1general.P1general):
         raise NotImplementedError()
         up = np.empty(len(colors))
         for i,color in enumerate(colors):
-            lines = self.mesh.linesoflabel[color]
+            lines = self.mesh.labels.line[color]
             nodes = np.unique(lines)
             print(f"{u[nodes]=}")
             print(f"{self.mesh.points[nodes,0]=}")
@@ -545,7 +545,7 @@ class P1(p1general.P1general):
     def computeMeanValues(self, u, colors):
         up = np.empty(len(colors))
         for i, color in enumerate(colors):
-            cells = self.mesh.cellsoflabel[color]
+            cells = self.mesh.labels.cell[color]
             up[i] = np.sum(np.mean(u[self.mesh.cells[cells]],axis=1)*self.mesh.cell_volumes[cells])
         return up
 

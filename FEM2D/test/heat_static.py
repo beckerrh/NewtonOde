@@ -48,12 +48,10 @@ disc_params={'dirichletmethod':'nitsche'}
 linearsolver = {'method':'pyamg', 'disp':1}
 # linearsolver = "spsolve"
 heat = Elliptic(application=HeatExample(), fem='p1', disc_params=disc_params, linearsolver=linearsolver)
-
-plotting = False
+plotting = True
 mesh_timer = timer.Timer()
-for ell in range(10):
+for ell in range(13):
     with heat.timer.scope(f"AFEM{ell:02d}"):
-
         with heat.timer("solve"):
             result, u = heat.static(method="linear")
         print(f"{result.info=}")
@@ -75,10 +73,9 @@ for ell in range(10):
         with heat.timer("marking"):
             marked = marking.dorfler_marking(eta, theta=0.75)
         with heat.timer("refine"):
-            with heat.timer("refine"):
-                mesh2 = heat.mesh.refine_nvb(marked, timer=mesh_timer, debug=False)
+            mesh2, info = heat.mesh.refine_nvb(marked, timer=mesh_timer, debug=False)
         with heat.timer("setMesh"):
             heat.setMesh(mesh2)  # mandatory: rebuild fems, bdry data, coefficients, matrix cache
-print(result.info['timer'].summary()+'\n')
+# print(result.info['timer'].summary()+'\n')
 print(heat.timer.summary_by_leaf()+'\n')
 print(mesh_timer.summary_by_leaf())

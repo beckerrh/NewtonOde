@@ -270,7 +270,7 @@ def meshWithBoundaries(mesh, **kwargs):
         ax = plt
 
     lines = mesh.faces
-    bdrylabels = mesh.bdrylabels
+    bdrylabels = mesh.labels.boundary
 
     x, y, tris, _, _ = _mesh_arrays(mesh)
 

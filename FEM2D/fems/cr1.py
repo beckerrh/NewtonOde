@@ -9,7 +9,7 @@ from matplotlib import colors
 import numpy as np
 import scipy.linalg as linalg
 import scipy.sparse as sparse
-from FEM2D.tools import barycentric
+from FEM2D.fems import barycentric
 from FEM2D.fems import p1general
 import FEM2D.fems.data, FEM2D.fems.rt0
 
@@ -76,12 +76,12 @@ class CR1(p1general.P1general):
         bdrydata.facesdirall = np.empty(shape=(0), dtype=np.uint32)
         bdrydata.colorsdir = colorsdir
         for color in colorsdir:
-            facesdir = self.mesh.bdrylabels[color]
+            facesdir = self.mesh.labels.boundary[color]
             bdrydata.facesdirall = np.unique(np.union1d(bdrydata.facesdirall, facesdir))
         bdrydata.facesinner = np.setdiff1d(np.arange(self.mesh.nfaces, dtype=int), bdrydata.facesdirall)
         bdrydata.facesdirflux = {}
         for color in colorsflux:
-            bdrydata.facesdirflux[color] = self.mesh.bdrylabels[color]
+            bdrydata.facesdirflux[color] = self.mesh.labels.boundary[color]
         return bdrydata
     def computeRhsNitscheDiffusion(self, nitsche_param, b, diffcoff, colors, udir=None, bdrycondfct=None, coeff=1, lumped=False):
         if udir is None:
@@ -133,7 +133,7 @@ class CR1(p1general.P1general):
         nfaces, ncells, dim, nlocal  = self.mesh.nfaces, self.mesh.ncells, self.mesh.dimension, self.nlocal()
         faces_of_cells = self.mesh.faces_of_cells
         for i,color in enumerate(colors):
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             cells = self.mesh.cells_of_faces[faces, 0]
             normalsS = self.mesh.normals[faces,:dim]
             cellgrads = self.cellgrads[cells, :, :dim]
@@ -160,7 +160,7 @@ class CR1(p1general.P1general):
             bdrydata.bsaved[color] = b[faces]
         help = np.zeros_like(b)
         for color in colorsdir:
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             if color in bdrycond.fct:
                 dirichlet = bdrycond.fct[color]
                 help[faces] = dirichlet(x[faces], y[faces], z[faces])
@@ -210,7 +210,7 @@ class CR1(p1general.P1general):
         if lumped:
             for color in colors:
                 if not color in f or not f[color]: continue
-                faces = self.mesh.bdrylabels[color]
+                faces = self.mesh.labels.boundary[color]
                 ci = self.mesh.cells_of_faces[faces][:, 0]
                 foc = self.mesh.faces_of_cells[ci]
                 mask = foc != faces[:, np.newaxis]
@@ -227,7 +227,7 @@ class CR1(p1general.P1general):
             return b
         for color in colors:
             if not color in f or not f[color]: continue
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             normalsS = normalsS / dS[:, np.newaxis]
@@ -272,7 +272,7 @@ class CR1(p1general.P1general):
         nfaces, dim = self.mesh.nfaces, self.mesh.dimension
         massloc = barycentric.crbdryothers(dim)
         # lumped = False
-        if colors is None: colors = self.mesh.bdrylabels.keys()
+        if colors is None: colors = self.mesh.labels.boundary.keys()
         if not isinstance(coeff, dict):
             faces = self.mesh.bdryFaces(colors)
             normalsS = self.mesh.normals[faces]
@@ -298,7 +298,7 @@ class CR1(p1general.P1general):
         cols = np.empty(shape=(0), dtype=int)
         mat = np.empty(shape=(0), dtype=float)
         for color in colors:
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS, axis=1)*coeff[color]
             cols = np.append(cols, faces)
@@ -318,7 +318,7 @@ class CR1(p1general.P1general):
     def massDotBoundary(self, b=None, f=None, colors=None, coeff=1, lumped=False):
         #TODO CR1 boundary integrals: can do at ones since last index in faces_of_cells is the bdry side:
         # assert np.all(faces == foc[:,-1])
-        if colors is None: colors = self.mesh.bdrylabels.keys()
+        if colors is None: colors = self.mesh.labels.boundary.keys()
         massloc = barycentric.crbdryothers(self.mesh.dimension)
         if not isinstance(coeff, dict):
             faces = self.mesh.bdryFaces(colors)
@@ -341,7 +341,7 @@ class CR1(p1general.P1general):
             return b
         assert(isinstance(coeff, dict))
         for color in colors:
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             dS *= coeff[color]
@@ -452,14 +452,14 @@ class CR1(p1general.P1general):
     def computeRhsCell(self, b, rhscell):
         if rhscell is None: return b
         if isinstance(rhscell,dict):
-            assert set(rhscell.keys())==set(self.mesh.cellsoflabel.keys())
+            assert set(rhscell.keys())==set(self.mesh.labels.cell.keys())
             dimension, faces_of_cells, dV = self.mesh.dimension, self.mesh.faces_of_cells, self.mesh.cell_volumes
             scale = 1 / (dimension + 1)
             return b
             scale = 1 / (self.mesh.dimension + 1)
             for label, fct in rhscell.items():
                 if fct is None: continue
-                cells = self.mesh.cellsoflabel[label]
+                cells = self.mesh.labels.cell[label]
                 xc, yc, zc = self.mesh.cell_centers[cells].T
                 bC = scale * fct(xc, yc, zc) * dV[cells]
                 np.add.at(b, faces_of_cells, bC)
@@ -489,7 +489,7 @@ class CR1(p1general.P1general):
     def computeBdryMean(self, u, colors):
         mean, omega = np.zeros(len(colors)), np.zeros(len(colors))
         for i,color in enumerate(colors):
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             omega[i] = np.sum(dS)
@@ -509,7 +509,7 @@ class CR1(p1general.P1general):
     def computeBdryNormalFlux(self, u, colors, bdrydata, bdrycond, diffcoff):
         flux, omega = np.zeros(len(colors)), np.zeros(len(colors))
         for i,color in enumerate(colors):
-            faces = self.mesh.bdrylabels[color]
+            faces = self.mesh.labels.boundary[color]
             normalsS = self.mesh.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             omega[i] = np.sum(dS)

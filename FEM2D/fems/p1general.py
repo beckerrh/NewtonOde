@@ -116,7 +116,7 @@ class P1general():
 #------------------------------
 def test(self):
     import scipy.sparse.linalg as splinalg
-    colors = self.mesh.bdrylabels.keys()
+    colors = self.mesh.labels.boundary.keys()
     bdrydata = self.prepareBoundary(colorsdir=colors)
     A = self.computeMatrixDiffusion(coeff=1)
     A = self.matrixBoundaryStrong(A, bdrydata=bdrydata)

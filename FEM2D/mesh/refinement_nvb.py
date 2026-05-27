@@ -16,7 +16,26 @@ from contextlib import nullcontext
 from FEM2D.mesh.mesh_edges import compute_edges, face_dict, sorted_edge
 from FEM2D.mesh.mesh_checks import check_no_degenerate_cells, check_no_nonmanifold_edges, check_boundary_normals
 
-from collections import defaultdict
+from collections import defaultdict, deque
+from dataclasses import dataclass
+
+@dataclass
+class RefinementInfo:
+    old_npoints: int
+    new_npoints: int
+    old_ncells: int
+    new_ncells: int
+
+    # fine node i comes from:
+    # - old node i, if i < old_npoints
+    # - midpoint of old edge (a,b), if i >= old_npoints
+    midpoint_parents: dict[int, tuple[int, int]]
+
+    # optional but useful
+    child_cells_of_parent: dict[int, list[int]]
+    parent_cell_of_child: np.ndarray
+
+
 
 def _timed(timer, name):
     return timer(name) if timer is not None else nullcontext()
@@ -30,7 +49,41 @@ def _cell_edges(tri):
     }
 
 
-def _refine_cell_recursive_nvb(tri, refedge, marked_edges, points, new_points, edge_to_mid):
+def _refine_cell_nvb_iterative(tri, refedge, marked_edges, points, new_points, edge_to_mid):
+    out_cells = []
+    out_refs = []
+
+    stack = [(list(map(int, tri)), sorted_edge(refedge[0], refedge[1]))]
+
+    while stack:
+        tri, refedge = stack.pop()
+
+        v0, v1, v2 = tri
+        e01 = sorted_edge(v0, v1)
+        e12 = sorted_edge(v1, v2)
+        e20 = sorted_edge(v2, v0)
+
+        if e01 not in marked_edges and e12 not in marked_edges and e20 not in marked_edges:
+            out_cells.append(tri)
+            out_refs.append(refedge)
+            continue
+
+        a, b = refedge
+        c = _third_vertex(tri, a, b)
+
+        m = _edge_midpoint((a, b), points, edge_to_mid, new_points)
+
+        child0 = [c, a, m]
+        child1 = [b, c, m]
+
+        ref0 = sorted_edge(c, a)
+        ref1 = sorted_edge(b, c)
+
+        stack.append((child1, ref1))
+        stack.append((child0, ref0))
+
+    return out_cells, out_refs
+def _refine_cell_recursive_nvb(tri, refedge, marked_edges, points, new_points, edge_to_mid,):
     tri = list(map(int, tri))
     refedge = sorted_edge(refedge[0], refedge[1])
 
@@ -62,6 +115,8 @@ def _refine_cell_recursive_nvb(tri, refedge, marked_edges, points, new_points, e
     )
 
     return cells0 + cells1, refs0 + refs1
+
+
 def check_refedges(mesh, where=""):
     for icell, tri in enumerate(mesh.cells):
         tri = list(map(int, tri))
@@ -123,36 +178,20 @@ def _third_vertex(tri, a, b):
     raise RuntimeError("degenerate triangle")
 
 def _edge_midpoint(edge, points, edge_to_mid, new_points):
-    a, b = edge
-    e = sorted_edge(a, b)
-
-    if e in edge_to_mid:
-        return edge_to_mid[e]
-
-    pmid = 0.5 * (points[a] + points[b])
-
-    idx = len(new_points)
-    new_points.append(pmid)
-
-    edge_to_mid[e] = idx
-    return idx
+    e = sorted_edge(edge[0], edge[1])
+    return edge_to_mid[e]
 
 # ====================================================================== #
-def _split_boundary_labels(mesh,edge_to_mid):
+def _split_boundary_labels(mesh, edge_to_mid):
     """
     Split old labelled boundary edges into child edges.
     """
     new_bdrylabels = {}
 
-    if not hasattr(mesh, "bdrylabels"):
-        return new_bdrylabels
-
-    for label, faces in mesh.bdrylabels.items():
-
+    for label, faces in mesh.labels.boundary.items():
         new_faces = []
 
         for f in faces:
-
             a, b = mesh.faces[f]
             e = sorted_edge(a, b)
 
@@ -167,34 +206,31 @@ def _split_boundary_labels(mesh,edge_to_mid):
 
     return new_bdrylabels
 
-
 # ====================================================================== #
 def _apply_boundary_labels(mesh, boundary_edge_labels):
     """
-    Convert edge tuples to rebuilt face indices.
+    Convert boundary edge tuples to rebuilt face indices.
     """
     if not boundary_edge_labels:
-        mesh.bdrylabels = {}
+        mesh.labels.boundary = {}
         return
 
-    fmap = face_dict(mesh.faces)
-
+    face_to_id = face_dict(mesh.faces)
     bdrylabels = {}
 
     for label, edges in boundary_edge_labels.items():
-
         ids = []
 
-        for e in edges:
-            e = sorted_edge(e[0], e[1])
+        for a, b in edges:
+            edge = sorted_edge(a, b)
+            iface = face_to_id.get(edge)
 
-            if e in fmap:
-                ids.append(fmap[e])
+            if iface is not None:
+                ids.append(iface)
 
         bdrylabels[label] = np.asarray(ids, dtype=int)
 
-    mesh.bdrylabels = bdrylabels
-
+    mesh.labels.boundary = bdrylabels
 
 # ====================================================================== #
 def refine_nvb(mesh, marked, debug=False, timer=None):
@@ -237,7 +273,6 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
     # ------------------------------------------------------------------ #
     # Closure propagation
     # ------------------------------------------------------------------ #
-
     with _timed(timer, "closure"):
         refine_edge = np.zeros(mesh.faces.shape[0], dtype=bool)
 
@@ -245,72 +280,90 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
         if debug:
             check_refedges(mesh, "entry")
 
+        # Face index of the reference edge of each cell.
+        cell_ref_faces = np.empty(ncells, dtype=int)
+        for icell in range(ncells):
+            a, b = refedges[icell]
+            cell_ref_faces[icell] = fmap[sorted_edge(a, b)]
+
+
+        queue = deque()
+
+        # Initial marking: marked cells force refinement of their reference edge.
         for icell in np.flatnonzero(marked):
-            iface = fmap[sorted_edge(refedges[icell, 0], refedges[icell, 1])]
-            # iface = _face_index_from_edge(mesh, refedges[icell])
-            refine_edge[iface] = True
+            iref = cell_ref_faces[icell]
+            if not refine_edge[iref]:
+                refine_edge[iref] = True
+                queue.append(iref)
 
-        changed = True
-        while changed:
-            changed = False
+        # Closure propagation:
+        # If a cell has one refined edge, then its own reference edge must be refined.
+        while queue:
+            iface = queue.popleft()
 
-            for icell in range(ncells):
+            for icell in mesh.cells_of_faces[iface]:
+                if icell < 0:
+                    continue
 
-                tri = list(map(int, cells[icell]))
-                refedge = sorted_edge(refedges[icell, 0], refedges[icell, 1])
-                # iref = _face_index_from_edge(mesh, refedge)
-                iref = fmap[refedge]
-
-                local_faces = faces_of_cells[icell]
-
-                # If any edge of this cell is marked, the cell must be bisected
-                # along its own reference edge.
-                if np.any(refine_edge[local_faces]) and not refine_edge[iref]:
+                iref = cell_ref_faces[icell]
+                if not refine_edge[iref]:
                     refine_edge[iref] = True
-                    changed = True
+                    queue.append(iref)
+    # ------------------------------------------------------------------ #
+    with _timed(timer, "new_points"):
 
-        # ------------------------------------------------------------------ #
         edge_to_mid = {}
 
-        new_points = [p.copy() for p in points]
+        refined_faces = np.flatnonzero(refine_edge)
+        n_old = points.shape[0]
+        n_new = refined_faces.size
 
-        for iface, flag in enumerate(refine_edge):
+        new_points = np.empty((n_old + n_new, points.shape[1]), dtype=points.dtype)
+        new_points[:n_old] = points
 
-            if not flag:
-                continue
-
+        for j, iface in enumerate(refined_faces):
             a, b = faces[iface]
-
-            _edge_midpoint(
-                (a, b),
-                points,
-                edge_to_mid,
-                new_points,
-            )
+            imid = n_old + j
+            edge = sorted_edge(a, b)
+            edge_to_mid[edge] = imid
+            new_points[imid] = 0.5 * (points[a] + points[b])
 
     # ------------------------------------------------------------------ #
     # Build refined cells
     # ------------------------------------------------------------------ #
-    with _timed(timer, "rebuild"):
-        new_cells = []
-        new_refedges = []
-        new_celllabels = []
 
+    with _timed(timer, "old_celllabels"):
         old_celllabels = np.empty(ncells, dtype=int)
-        for label, ids in mesh.cellsoflabel.items():
+        for label, ids in mesh.labels.cell.items():
             old_celllabels[np.asarray(ids, dtype=int)] = label
 
+    with _timed(timer, "marked_edges_set"):
         marked_edges = {
             sorted_edge(faces[iface, 0], faces[iface, 1])
             for iface, flag in enumerate(refine_edge)
             if flag
         }
 
+    with _timed(timer, "refine_cells_loop"):
+        new_cells = []
+        new_refedges = []
+        new_celllabels = []
+        old_npoints = points.shape[0]
+        old_ncells = cells.shape[0]
+
+        midpoint_parents = {
+            int(mid): tuple(map(int, edge))
+            for edge, mid in edge_to_mid.items()
+        }
+
+        child_cells_of_parent = {}
+        parent_cell_of_child = []
+
         for icell in range(ncells):
             tri = list(map(int, cells[icell]))
             refedge = tuple(map(int, refedges[icell]))
 
-            childs, child_refs = _refine_cell_recursive_nvb(
+            childs, child_refs = _refine_cell_nvb_iterative(
                 tri,
                 refedge,
                 marked_edges,
@@ -319,19 +372,22 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
                 edge_to_mid,
             )
 
+            first_child = len(new_cells)
+
             new_cells.extend(childs)
             new_refedges.extend(child_refs)
             new_celllabels.extend([old_celllabels[icell]] * len(childs))
+
+            child_ids = list(range(first_child, first_child + len(childs)))
+            child_cells_of_parent[icell] = child_ids
+            parent_cell_of_child.extend([icell] * len(childs))
     # ------------------------------------------------------------------ #
 
     with _timed(timer, "bdry_labels"):
-
         boundary_edge_labels = _split_boundary_labels(mesh, edge_to_mid)
-
         mesh.points = np.asarray(new_points)
-
         mesh.cells = np.asarray(new_cells, dtype=int)
-        mesh.celllabels = np.asarray(new_celllabels, dtype=int)
+        mesh.cell_markers = np.asarray(new_celllabels, dtype=int)
         mesh.refedges = np.asarray(new_refedges, dtype=int)
         if debug:
             check_refedges(mesh, "before finalize")
@@ -362,8 +418,16 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
         check_no_nonmanifold_edges(mesh.cells)
         check_boundary_normals(mesh)
 
-    return mesh
-
+    info = RefinementInfo(
+        old_npoints=old_npoints,
+        new_npoints=mesh.points.shape[0],
+        old_ncells=old_ncells,
+        new_ncells=mesh.cells.shape[0],
+        midpoint_parents=midpoint_parents,
+        child_cells_of_parent=child_cells_of_parent,
+        parent_cell_of_child=np.asarray(parent_cell_of_child, dtype=int),
+    )
+    return mesh, info
 
 # ====================================================================== #
 if __name__ == "__main__":

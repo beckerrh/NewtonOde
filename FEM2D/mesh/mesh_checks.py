@@ -30,7 +30,7 @@ def check_boundary_normals(mesh, tol=1e-12):
 
     bad = []
 
-    for color, faces in mesh.bdrylabels.items():
+    for color, faces in mesh.labels.boundary.items():
         for f in faces:
             cells = mesh.cells_of_faces[f]
             cells = np.asarray(cells)
@@ -81,6 +81,6 @@ def check_mesh(mesh):
     print("faces max", mesh.faces.max())
     print("dV min/max", mesh.cell_volumes.min(), mesh.cell_volumes.max())
     print("bad dV", np.sum(mesh.cell_volumes <= 0))
-    print("cell labels", {k: len(v) for k, v in mesh.cellsoflabel.items()})
-    print("bdry labels", {k: len(v) for k, v in mesh.bdrylabels.items()})
+    print("cell labels", {k: len(v) for k, v in mesh.labels.cell.items()})
+    print("bdry labels", {k: len(v) for k, v in mesh.labels.boundary.items()})
 

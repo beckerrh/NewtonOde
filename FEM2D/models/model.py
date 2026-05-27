@@ -107,12 +107,12 @@ class Model(object):
             return [partial(_solexactdir, icomp=icomp) for icomp in range(ncomp)]
     def generatePoblemDataForAnalyticalSolution(self):
         bdrycond = self.problemdata.bdrycond
-        print(f"{self.application.exactsolution=} {self.mesh.bdrylabels=}")
+        print(f"{self.application.exactsolution=} {self.mesh.labels.boundary=}")
         solexact = self.application.exactsolution
         self.problemdata.params.fct_glob['rhs'] = self.defineRhsAnalyticalSolution(solexact)
         if hasattr(self, 'time'):
             self.problemdata.params.fct_glob['initial_condition'] = self.defineInitialConditionAnalyticalSolution(solexact)
-        for color in self.mesh.bdrylabels:
+        for color in self.mesh.labels.boundary:
             cmd = f"self.define{bdrycond.type[color]}AnalyticalSolution(self.problemdata,{color},solexact)"
             # print(f"cmd={cmd}")
             bdrycond.fct[color] = eval(cmd)
@@ -120,7 +120,7 @@ class Model(object):
         if name in params.fct_glob:
             fct = np.vectorize(params.fct_glob[name])
             arr = np.empty(self.mesh.ncells)
-            for color, cells in self.mesh.cellsoflabel.items():
+            for color, cells in self.mesh.labels.cell.items():
                 xc, yc, zc = self.mesh.cell_centers[cells].T
                 arr[cells] = fct(color, xc, yc, zc)
         elif name in params.scal_glob:
@@ -128,7 +128,7 @@ class Model(object):
         elif name in params.scal_cells:
             arr = np.empty(self.mesh.ncells)
             for color in params.scal_cells[name]:
-                arr[self.mesh.cellsoflabel[color]] = params.scal_cells[name][color]
+                arr[self.mesh.labels.cell[color]] = params.scal_cells[name][color]
         else:
             msg = f"{name} should be given in 'fct_glob' or 'scal_glob' or 'scal_cells' (problemdata.params)"
             raise ValueError(msg)

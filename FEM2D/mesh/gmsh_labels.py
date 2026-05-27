@@ -4,30 +4,17 @@ import numpy as np
 def attach_gmsh_labels(mesh, meshio_mesh, simplex_name, face_name):
     celltypes = [c.type for c in meshio_mesh.cells]
 
-    cellsoflabel_by_type = parse_cell_sets(
-        mesh,
+    cellsoflabel_by_type, names = parse_cell_sets(
         cell_sets=meshio_mesh.cell_sets,
         cells_dict=meshio_mesh.cells_dict,
         celltypes=celltypes,
     )
 
-    mesh.cellsoflabel = cellsoflabel_by_type.get(simplex_name, {})
+    mesh.labels.cell = cellsoflabel_by_type.get(simplex_name, {})
+    mesh.labels.names.update(names)
 
-    if "vertex" in meshio_mesh.cells_dict:
-        mesh.verticesoflabel = {
-            k: meshio_mesh.cells_dict["vertex"][v]
-            for k, v in cellsoflabel_by_type.get("vertex", {}).items()
-        }
-    else:
-        mesh.verticesoflabel = {}
-
-    if "line" in meshio_mesh.cells_dict:
-        mesh.linesoflabel = {
-            k: meshio_mesh.cells_dict["line"][v]
-            for k, v in cellsoflabel_by_type.get("line", {}).items()
-        }
-    else:
-        mesh.linesoflabel = {}
+    mesh.labels.vertex = cellsoflabel_by_type.get("vertex", {})
+    mesh.labels.line = cellsoflabel_by_type.get("line", {})
 
     if face_name not in cellsoflabel_by_type:
         raise ValueError(f"{face_name=} not found in physical labels.")
@@ -38,15 +25,13 @@ def attach_gmsh_labels(mesh, meshio_mesh, simplex_name, face_name):
         physlabels_gmsh=cellsoflabel_by_type[face_name],
     )
 
-
-def parse_cell_sets(mesh, cell_sets, cells_dict, celltypes):
-    typesoflabel = {}
+def parse_cell_sets(cell_sets, cells_dict, celltypes):
     sizes = {key: 0 for key in celltypes}
     cellsoflabel = {key: {} for key in celltypes}
     ctordered = []
 
-    labeldict_s2i = {}
-    labeldict_i2s = {}
+    names = {}
+    name_to_id = {}
     labind = 0
 
     for label, cb in cell_sets.items():
@@ -63,33 +48,26 @@ def parse_cell_sets(mesh, cell_sets, cells_dict, celltypes):
             try:
                 ilabel = int(label)
             except Exception:
-                if label in labeldict_s2i:
-                    ilabel = labeldict_s2i[label]
+                if label in name_to_id:
+                    ilabel = name_to_id[label]
                 else:
                     labind -= 1
                     ilabel = labind
-                    labeldict_s2i[label] = ilabel
-                    labeldict_i2s[ilabel] = label
+                    name_to_id[label] = ilabel
+                    names.setdefault(celltype, {})[ilabel] = label
 
             cellsoflabel[celltype][ilabel] = np.asarray(info, dtype=np.int64).copy()
             sizes[celltype] += info.shape[0]
-            typesoflabel[ilabel] = celltype
             ctordered.append(celltype)
 
-    if labind:
-        mesh.labeldict_s2i = labeldict_s2i
-        mesh.labeldict_i2s = labeldict_i2s
-
     # Correct numbering in gmsh cell_sets.
-    # This preserves the old convention.
     n = 0
     for ct in list(dict.fromkeys(ctordered)):
         for _, cb in cellsoflabel[ct].items():
             cb -= n
         n += sizes[ct]
 
-    return cellsoflabel
-
+    return cellsoflabel, names
 
 def construct_boundary_labels(mesh, faces_gmsh, physlabels_gmsh):
     faces_gmsh = np.sort(np.asarray(faces_gmsh, dtype=np.int64), axis=1)
@@ -117,7 +95,7 @@ def construct_boundary_labels(mesh, faces_gmsh, physlabels_gmsh):
     binv = np.empty_like(bp)
     binv[bp2] = np.arange(len(bp2))
 
-    mesh.bdrylabels = {}
+    mesh.labels.boundary = {}
 
     for color, cb in physlabels_gmsh.items():
         cb = np.asarray(cb, dtype=np.int64)
@@ -127,7 +105,7 @@ def construct_boundary_labels(mesh, faces_gmsh, physlabels_gmsh):
 
         # Only keep physical faces which are actual boundary faces.
         if np.all(indices[bpi[cb]]):
-            mesh.bdrylabels[int(color)] = bdryids[fp[binv[cb]]]
+            mesh.labels.boundary[int(color)] = bdryids[fp[binv[cb]]]
         else:
             # This happens for physical lines used only to help gmsh,
             # e.g. internal hole construction or interface labels.

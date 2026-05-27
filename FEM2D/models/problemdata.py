@@ -124,7 +124,7 @@ class Params(object):
         for color in colors: self.scal_cells[name][color] = value
     def check(self, mesh):
         for name in self.scal_cells:
-            _check2setsequal_(set(self.scal_cells[name]), set(mesh.cellsoflabel.keys()), "scal_cells", "mesh.cellsoflabel")
+            _check2setsequal_(set(self.scal_cells[name]), set(mesh.labels.cell.keys()), "scal_cells", "mesh.labels.cell")
         for name in self.scal_glob:
             if name in self.scal_cells: raise ValueError(f"key '{name}' given twice")
             if name in self.fct_glob: raise ValueError(f"key '{name}' given twice")
@@ -179,12 +179,12 @@ class ProblemData(object):
         return repr
 
     def check(self, mesh):
-        colors = mesh.bdrylabels.keys()
+        colors = mesh.labels.boundary.keys()
         self.bdrycond.convert(mesh)
         self.bdrycond.check(colors)
         colors = list(colors)
-        colors.extend(list(mesh.verticesoflabel.keys()))
-        colors.extend(list(mesh.linesoflabel.keys()))
+        colors.extend(list(mesh.labels.vertex.keys()))
+        colors.extend(list(mesh.labels.line.keys()))
         if self.postproc: self.postproc.check(colors)
         self.params.check(mesh)
 

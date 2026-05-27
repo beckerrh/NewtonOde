@@ -2,17 +2,21 @@
 import numpy as np
 from scipy import sparse
 
-from Utility import timer
 from . import topology, geometry
+from contextlib import nullcontext
+from dataclasses import dataclass, field
 
+@dataclass
+class MeshLabels:
+    boundary: dict = field(default_factory=dict)
+    cell: dict = field(default_factory=dict)
+    line: dict = field(default_factory=dict)
+    vertex: dict = field(default_factory=dict)
+    names: dict = field(default_factory=dict)
 
 class SimplexMesh:
     """
     Simplicial mesh container.
-
-    Public compatibility attributes kept:
-        cells, faces_of_cells, cells_of_faces, pointsc, pointsf, dV
-        bdrylabels, cellsoflabel, linesoflabel, verticesoflabel
     """
 
     def __init__(self, points, cells=None, *, labels=None):
@@ -41,16 +45,19 @@ class SimplexMesh:
         self.dimension = self.cells.shape[1] - 1
         self.nnodes = self.points.shape[0]
 
-        self.bdrylabels = {}
-        self.cellsoflabel = {}
-        self.linesoflabel = {}
-        self.verticesoflabel = {}
+        self.labels = MeshLabels()
 
         if labels is not None:
-            self.__dict__.update(labels)
+            self.labels.boundary = labels.get("bdrylabels", {})
+            self.labels.cell = labels.get("cellsoflabel", {})
+            self.labels.line = labels.get("linesoflabel", {})
+            self.labels.vertex = labels.get("verticesoflabel", {})
+            self.labels.names = labels.get("names", {})
 
         self._rebuild()
         self.check()
+
+
 
     @classmethod
     def from_meshio(cls, mesh):
@@ -68,26 +75,24 @@ class SimplexMesh:
         )
 
     def finalize_after_topology_change(self, timer):
-        from contextlib import nullcontext
         self.points = np.asarray(self.points)
         self.cells = np.asarray(self.cells, dtype=int)
         self.nnodes = self.points.shape[0]
         self.ncells = self.cells.shape[0]
         with timer("rebuild") if timer else nullcontext():
             self._rebuild(timer=timer)
+        if hasattr(self, "cell_markers"):
+            with timer("celllabels") if timer else nullcontext():
+                cell_labels = {}
 
-        with timer("celllabels") if timer else nullcontext():
-            if hasattr(self, "celllabels"):
-                self.cellsoflabel = {}
-                for icell, label in enumerate(self.celllabels):
-                    self.cellsoflabel.setdefault(label, []).append(icell)
-                self.cellsoflabel = {
+                for icell, label in enumerate(self.cell_markers):
+                    cell_labels.setdefault(int(label), []).append(icell)
+
+                self.labels.cell = {
                     label: np.asarray(ids, dtype=int)
-                    for label, ids in self.cellsoflabel.items()
+                    for label, ids in cell_labels.items()
                 }
-
     def _rebuild(self, timer=None):
-        from contextlib import nullcontext
         with timer("construct_faces_from_cells") if timer else nullcontext():
             topology.construct_faces_from_cells(self)
         with timer("construct_centers_normals_volumes") if timer else nullcontext():
@@ -110,22 +115,22 @@ class SimplexMesh:
             colors = [colors]
         bdrypoints = []
         for color in colors:
-            if not isinstance(color, int):
-                color = self.labeldict_s2i[color]
-            facesdir = self.bdrylabels[color]
+            # if not isinstance(color, int):
+            #     color = self.labeldict_s2i[color]
+            facesdir = self.labels.boundary[color]
             bdrypoints.append(np.unique(self.faces[facesdir].ravel()))
         return np.array(bdrypoints).reshape(-1)
 
     def bdryFaces(self, colors=None):
         if colors is None:
-            colors = self.bdrylabels.keys()
+            colors = self.labels.boundary.keys()
         pos = [0]
         for color in colors:
-            pos.append(pos[-1] + len(self.bdrylabels[color]))
+            pos.append(pos[-1] + len(self.labels.boundary[color]))
 
         faces = np.empty(pos[-1], dtype=np.uint32)
         for i, color in enumerate(colors):
-            faces[pos[i]:pos[i + 1]] = self.bdrylabels[color]
+            faces[pos[i]:pos[i + 1]] = self.labels.boundary[color]
         return faces
 
     def faces_of_cellsNotOnInnerFaces(self, ci0, ci1):
@@ -150,7 +155,7 @@ class SimplexMesh:
         self.simpOfVert = S
 
     def write(self, filename, dirname=None, data=None):
-        from .meshio_io import write
+        from FEM2D.mesh.meshio_io import write
         return write(self, filename, dirname=dirname, data=data)
 
     def writemeshio(self, filename, dirname=None, data=None):
@@ -165,12 +170,14 @@ class SimplexMesh:
 
     def __repr__(self):
         s = f"dim/nnodes/nfaces/ncells: {self.dimension}/{self.nnodes}/{self.nfaces}/{self.ncells}"
-        if hasattr(self, "labeldict_i2s"):
-            s += f"\nbdrylabels={[self.labeldict_i2s.get(k, k) for k in self.bdrylabels.keys()]}"
-            s += f"\ncellsoflabel={[self.labeldict_i2s.get(k, k) for k in self.cellsoflabel.keys()]}"
-        else:
-            s += f"\nbdrylabels={list(self.bdrylabels.keys())}"
-            s += f"\ncellsoflabel={list(self.cellsoflabel.keys())}"
+        s += f"\nbdrylabels={list(self.labels.boundary.keys())}"
+        s += f"\ncellsoflabel={list(self.labels.cell.keys())}"
+        # if hasattr(self, "labeldict_i2s"):
+        #     s += f"\nbdrylabels={[self.labeldict_i2s.get(k, k) for k in self.labels.boundary.keys()]}"
+        #     s += f"\ncellsoflabel={[self.labeldict_i2s.get(k, k) for k in self.labels.cell.keys()]}"
+        # else:
+        #     s += f"\nbdrylabels={list(self.labels.boundary.keys())}"
+        #     s += f"\ncellsoflabel={list(self.labels.cell.keys())}"
         return s
 
     def __str__(self):
