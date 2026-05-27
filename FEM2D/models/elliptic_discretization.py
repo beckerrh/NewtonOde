@@ -1,23 +1,107 @@
 import numpy as np
-from FEM2D.models.elliptic_base import EllipticBase
+from FEM2D import fems
+from Utility.analyticalfunction import AnalyticalFunction
 
 # ================================================================= #
-class EllipticPrimal(EllipticBase):
-    def __init__(self, **kwargs):
-        # print(f"{kwargs.keys()=}")
-        super().__init__(**kwargs)
-    def meshSet(self):
-        super().meshSet()
+class EllipticDiscretization:
+    def __init__(self, mesh, application, fem_name, disc_params, problemdata, **kwargs):
+        self.verbose = kwargs.get('verbose', False)
+        self.mesh = mesh
+        self.application = application
+        self.disc_params = disc_params
+        self.problemdata = problemdata
+        self.hasconvection = 'convection' in self.disc_params \
+                          or 'convection' in self.problemdata.params.data.keys()\
+                          or 'convection' in self.problemdata.params.fct_glob.keys()
+        if self.hasconvection:
+            # print(f"{self.disc_params=}")
+            self.convectionmethod = self.disc_params.pop('convmethod', 'lps')
+            if self.convectionmethod == 'lps':
+                self.lpsparam = self.disc_params.pop('lpsparam', 0.2)
+        self.dirichletmethod = self.disc_params.pop('dirichletmethod','nitsche')
+        if self.dirichletmethod=='nitsche':
+            self.nitscheparam = self.disc_params.pop('nitscheparam', 10)
+        if fem_name == 'p1': self.fem = fems.p1.P1()
+        elif fem_name == 'cr1': self.fem = fems.cr1.CR1()
+        else: raise NotImplementedError(f"{self.fem=}")
+        self._checkProblemData()
+        self.kheatcell = self.compute_cell_vector_from_params('kheat', self.problemdata.params)
+        if self.hasconvection:
+            self.convdata = fems.data.ConvectionData()
+            rt = fems.rt0.RT0(mesh=self.mesh)
+            if 'convection' in self.problemdata.params.fct_glob:
+                convection_given = self.problemdata.params.fct_glob['convection']
+                if not isinstance(convection_given, list):
+                    p = "problemdata.params.fct_glob['convection']"
+                    raise ValueError(f"need '{p}' as a list of length dim of str or AnalyticalSolution")
+                elif isinstance(convection_given[0],str):
+                    self.convection_fct = [AnalyticalFunction(expr=e) for e in convection_given]
+                else:
+                    self.convection_fct = convection_given
+                    if not isinstance(convection_given[0], AnalyticalFunction):
+                        raise ValueError(f"convection should be given as 'str' and not '{type(convection_given[0])}'")
+                if len(self.convection_fct) != self.mesh.dimension:
+                    raise ValueError(f"{self.mesh.dimension=} {self.problemdata.params.fct_glob['convection']=}")
+                # print(f"{convection_given=}")
+                self.convdata.betart = rt.interpolate(self.convection_fct)
+            else:
+                data, fem, stack_storage = self.problemdata.params.data['convection']
+                self.convdata.betart = rt.interpolateFromFem(data, fem, stack_storage)
+            self.convdata.betacell = rt.toCell(self.convdata.betart)
+            colorsinflow = self.findInflowColors()
+            colorsdir = self.problemdata.bdrycond.colorsOfType("Dirichlet")
+            # print("betart shape", self.convdata.betart.shape)
+            # print("nfaces", self.mesh.nfaces)
+            # print("bdrylabels", {c: faces.tolist() for c, faces in self.mesh.labels.boundary.items()})
+            # print("colorsinflow", colorsinflow)
+            # print("colorsdir", colorsdir)
+            if not set(colorsinflow).issubset(set(colorsdir)):
+                raise ValueError(f"Inflow boundaries need to be subset of Dirichlet boundaries {colorsinflow=} {colorsdir=}")
         self.fem.setMesh(self.mesh)
         colorsdirichlet = self.problemdata.bdrycond.colorsOfType("Dirichlet")
         colorsflux = self.problemdata.postproc.colorsOfType("bdry_nflux")
-        if self.dirichletmethod!="nitsche":
+        if self.dirichletmethod != "nitsche":
             self.bdrydata = self.fem.prepareBoundary(colorsdirichlet, colorsflux)
-    def getNcomps(self, mesh):
-        return [1]
-    def getSystemSize(self):
-        ns = [self.fem.nunknowns()]
-        return ns
+    def findInflowColors(self):
+        colors=[]
+        for color in self.mesh.labels.boundary.keys():
+            faces = self.mesh.labels.boundary[color]
+            if np.any(self.convdata.betart[faces]<-1e-10): colors.append(color)
+        return colors
+    def initsolution(self, b):
+        if isinstance(b,tuple):
+            # raise KeyError("i don't know how to handle {type(b)=}")
+            return [np.copy(bi) for bi in b]
+        return b.copy()
+    def compute_cell_vector_from_params(self, name, params):
+        if name in params.fct_glob:
+            fct = np.vectorize(params.fct_glob[name])
+            arr = np.empty(self.mesh.ncells)
+            for color, cells in self.mesh.labels.cell.items():
+                xc, yc, zc = self.mesh.cell_centers[cells].T
+                arr[cells] = fct(color, xc, yc, zc)
+        elif name in params.scal_glob:
+            arr = np.full(self.mesh.ncells, params.scal_glob[name])
+        elif name in params.scal_cells:
+            arr = np.empty(self.mesh.ncells)
+            for color in params.scal_cells[name]:
+                arr[self.mesh.labels.cell[color]] = params.scal_cells[name][color]
+        else:
+            msg = f"{name} should be given in 'fct_glob' or 'scal_glob' or 'scal_cells' (problemdata.params)"
+            raise ValueError(msg)
+        return arr
+    def _checkProblemData(self):
+        if self.verbose: print(f"checking problem data {self.problemdata=}")
+        bdrycond = self.problemdata.bdrycond
+        for color in self.mesh.labels.boundary:
+            if not color in bdrycond.type: raise ValueError(f"color={color} not in bdrycond={bdrycond}")
+            if bdrycond.type[color] in ["Robin"]:
+                if not color in bdrycond.param:
+                    raise ValueError(f"Robin condition needs paral 'alpha' color={color} bdrycond={bdrycond}")
+            if bdrycond.type[color] == "Dirichlet":
+                if not color in bdrycond.fct:
+                    bdrycond.fct[color] = lambda x,y,z: 0
+                # raise ValueError(f"Dirichlet condition needs fct for color={color} bdrycond={bdrycond}")
     def computeMassMatrix(self):
         lumped = self.disc_params.get('masslumped', False)
         return self.fem.computeMassMatrix(lumped=lumped)
@@ -153,9 +237,3 @@ class EllipticPrimal(EllipticBase):
             data.setdefault("cell", {})
             data["cell"]["eta"] = np.sqrt(eta2)
         return data
-    def pyamg_solver_args(self, args):
-        if self.hasconvection:
-            args['symmetric'] = False
-            args['smoother'] = 'schwarz'
-        else:
-            args['symmetric'] = True

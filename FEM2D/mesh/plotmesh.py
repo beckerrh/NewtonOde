@@ -54,16 +54,16 @@ def plotmesh(mesh, **kwargs):
 
 
 # ================================================================ #
-def plotMeshWithPointData(ax, pdn, pd, x, y, tris, alpha):
+def plotMeshWithPointData(ax, pdn, pd, x, y, tris, show_tris=True):
     if not isinstance(pd, np.ndarray):
         raise ValueError(f"Problem in data {type(pd)=}")
 
     if x.shape != pd.shape:
         raise ValueError(f"Problem in data {x.shape=} {pd.shape=}")
 
-    ax.triplot(x, y, tris, color="gray", lw=1, alpha=alpha)
-
     cnt = ax.tricontourf(x, y, tris, pd, levels=16, cmap="jet")
+    if show_tris:
+        ax.triplot(x, y, tris, color="k", lw=0.5, alpha=1)
 
     clb = plt.colorbar(cnt, ax=ax, shrink=0.6)
     clb.ax.set_title(pdn)
@@ -107,6 +107,9 @@ def meshWithData(mesh, **kwargs):
         raise NotImplementedError("meshWithData currently only supports 2D.")
 
     x, y, tris, pointsc, _ = _mesh_arrays(mesh)
+
+
+    show_tris = kwargs.pop("show_tris", True)
 
     xc = pointsc[:, 0]
     yc = pointsc[:, 1]
@@ -177,7 +180,7 @@ def meshWithData(mesh, **kwargs):
         else:
             ax = axs[count // ncols, count % ncols]
 
-        plotMeshWithPointData(ax, pdn, pd, x, y, tris, alpha)
+        plotMeshWithPointData(ax, pdn, pd, x, y, tris, show_tris=show_tris)
 
         _set_equal_axes(ax)
 

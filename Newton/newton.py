@@ -14,9 +14,7 @@ try:
 except ImportError:
     import armijo
 import Utility
-from Utility import logger
 from types import SimpleNamespace
-import numpy as np
 
 #----------------------------------------------------------------------
 class Newton:

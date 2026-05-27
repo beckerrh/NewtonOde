@@ -48,7 +48,7 @@ class Application:
         with pygmsh.geo.Geometry() as geom:
             self.defineGeometry(geom, h)
             mesh = geom.generate_mesh()
-        return SimplexMesh(mesh)
+        return SimplexMesh.from_meshio(mesh)
     def defineProblemData(self, problemdata):
         pass
     def plot(self, mesh, data, **kwargs):

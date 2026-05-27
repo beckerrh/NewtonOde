@@ -1,1 +1,1 @@
-from . import vectorview, linalg
+from . import vectorview, solver_factory

@@ -19,15 +19,7 @@ class SimplexMesh:
     Simplicial mesh container.
     """
 
-    def __init__(self, points, cells=None, *, labels=None):
-        # Backward compatibility:
-        # old code used SimplexMesh(meshio_mesh)
-        if cells is None:
-            from .mesh_io import from_meshio
-            other = from_meshio(points)
-            self.__dict__.update(other.__dict__)
-            return
-
+    def __init__(self, points, cells, *, labels=None, rebuild=True, check=True):
         self.points = np.asarray(points, dtype=float)
         self.cells = np.asarray(cells, dtype=np.int64)
 
@@ -40,7 +32,9 @@ class SimplexMesh:
             )
 
         if self.points.shape[1] != 3:
-            raise ValueError(f"points must have 2 or 3 columns, got {self.points.shape=}")
+            raise ValueError(
+                f"points must have 2 or 3 columns, got {self.points.shape=}"
+            )
 
         self.dimension = self.cells.shape[1] - 1
         self.nnodes = self.points.shape[0]
@@ -54,14 +48,16 @@ class SimplexMesh:
             self.labels.vertex = labels.get("verticesoflabel", {})
             self.labels.names = labels.get("names", {})
 
-        self._rebuild()
-        self.check()
+        if rebuild:
+            self._rebuild()
 
+        if check:
+            self.check()
 
 
     @classmethod
     def from_meshio(cls, mesh):
-        from .meshio_io import from_meshio
+        from .mesh_io import from_meshio
         return from_meshio(mesh)
 
     def refine_nvb(self, marked, debug=False, timer=None):
@@ -162,10 +158,11 @@ class SimplexMesh:
         from .meshio_io import writemeshio
         return writemeshio(self, filename, dirname=dirname, data=data)
 
+    def plot_boundary(self, **kwargs):
+        from . import plotmesh
+        return plotmesh.meshWithBoundaries(self, **kwargs)
     def plot(self, **kwargs):
         from . import plotmesh
-        if kwargs.pop("bdry", False):
-            return plotmesh.meshWithBoundaries(self, **kwargs)
         return plotmesh.meshWithData(self, **kwargs)
 
     def __repr__(self):

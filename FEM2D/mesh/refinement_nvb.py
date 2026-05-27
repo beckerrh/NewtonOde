@@ -19,22 +19,8 @@ from FEM2D.mesh.mesh_checks import check_no_degenerate_cells, check_no_nonmanifo
 from collections import defaultdict, deque
 from dataclasses import dataclass
 
-@dataclass
-class RefinementInfo:
-    old_npoints: int
-    new_npoints: int
-    old_ncells: int
-    new_ncells: int
-
-    # fine node i comes from:
-    # - old node i, if i < old_npoints
-    # - midpoint of old edge (a,b), if i >= old_npoints
-    midpoint_parents: dict[int, tuple[int, int]]
-
-    # optional but useful
-    child_cells_of_parent: dict[int, list[int]]
-    parent_cell_of_child: np.ndarray
-
+from FEM2D.mesh.refinement_info import RefinementInfo
+from FEM2D.mesh.simplex_mesh import SimplexMesh
 
 
 def _timed(timer, name):
@@ -382,53 +368,48 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
             child_cells_of_parent[icell] = child_ids
             parent_cell_of_child.extend([icell] * len(childs))
     # ------------------------------------------------------------------ #
-
-    with _timed(timer, "bdry_labels"):
+    with _timed(timer, "construct_new_mesh"):
         boundary_edge_labels = _split_boundary_labels(mesh, edge_to_mid)
-        mesh.points = np.asarray(new_points)
-        mesh.cells = np.asarray(new_cells, dtype=int)
-        mesh.cell_markers = np.asarray(new_celllabels, dtype=int)
-        mesh.refedges = np.asarray(new_refedges, dtype=int)
-        if debug:
-            check_refedges(mesh, "before finalize")
 
-    # ------------------------------------------------------------------ #
-    # Rebuild topology
-    # ------------------------------------------------------------------ #
-    with _timed(timer, "finalize"):
-        mesh.finalize_after_topology_change(timer=timer)
-    if debug:
-        check_refedges(mesh, "after finalize")
-    # ------------------------------------------------------------------ #
-    # Boundary labels
-    # ------------------------------------------------------------------ #
+        labels = {
+            "names": mesh.labels.names.copy(),
+        }
 
-    with _timed(timer, "bdry_labels"):
-        _apply_boundary_labels(
-            mesh,
-            boundary_edge_labels,
+        mesh2 = SimplexMesh(
+            points=np.asarray(new_points, dtype=float),
+            cells=np.asarray(new_cells, dtype=int),
+            labels=labels,
+            rebuild=False,
+            check=False,
         )
 
-    # ------------------------------------------------------------------ #
-    # Safety checks
-    # ------------------------------------------------------------------ #
+        mesh2.refedges = np.asarray(new_refedges, dtype=int)
+        mesh2.cell_markers = np.asarray(new_celllabels, dtype=int)
+
+    with _timed(timer, "finalize"):
+        mesh2.finalize_after_topology_change(timer=timer)
+
+    with _timed(timer, "bdry_labels"):
+        _apply_boundary_labels(mesh2, boundary_edge_labels)
+
     if debug:
-        check_no_degenerate_cells(mesh.cells)
-        debug_nonmanifold_edges(mesh.cells)
-        check_no_nonmanifold_edges(mesh.cells)
-        check_boundary_normals(mesh)
+        check_refedges(mesh2, "after finalize")
+        check_no_degenerate_cells(mesh2.cells)
+        debug_nonmanifold_edges(mesh2.cells)
+        check_no_nonmanifold_edges(mesh2.cells)
+        check_boundary_normals(mesh2)
 
     info = RefinementInfo(
         old_npoints=old_npoints,
-        new_npoints=mesh.points.shape[0],
+        new_npoints=mesh2.points.shape[0],
         old_ncells=old_ncells,
-        new_ncells=mesh.cells.shape[0],
+        new_ncells=mesh2.cells.shape[0],
         midpoint_parents=midpoint_parents,
         child_cells_of_parent=child_cells_of_parent,
         parent_cell_of_child=np.asarray(parent_cell_of_child, dtype=int),
     )
-    return mesh, info
 
+    return mesh2, info
 # ====================================================================== #
 if __name__ == "__main__":
 
@@ -448,8 +429,7 @@ if __name__ == "__main__":
 
             marked = xc**2 + yc**2 < 0.35**2
 
-            refine_nvb(mesh, marked)
-
+            mesh, info = refine_nvb(mesh, marked)
             print(
                 f"iter={k:2d} "
                 f"npoints={mesh.points.shape[0]:6d} "
