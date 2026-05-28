@@ -2,21 +2,24 @@
 """Debug checks for triangular meshes."""
 import numpy as np
 from collections import Counter
-from FEM2D.mesh.mesh_edges import sorted_edge
 
 def check_faces_of_cells_local_order(mesh):
+    def edge(a, b):
+        return (a, b) if a < b else (b, a)
+
     for ic, tri in enumerate(mesh.topology.cells):
         v0, v1, v2 = map(int, tri)
 
         expected = [
-            sorted_edge(v1, v2),
-            sorted_edge(v2, v0),
-            sorted_edge(v0, v1),
+            edge(v1, v2),
+            edge(v2, v0),
+            edge(v0, v1),
         ]
 
         for iloc in range(3):
             f = mesh.topology.faces_of_cells[ic, iloc]
-            got = sorted_edge(*mesh.topology.faces[f])
+            got = edge(*mesh.topology.faces[f])
+
             if got != expected[iloc]:
                 raise ValueError(
                     f"bad faces_of_cells ordering at cell {ic}, local {iloc}: "
@@ -55,16 +58,20 @@ def check_no_degenerate_cells(cells):
             raise ValueError(f"Degenerate triangle {icell}: {tri}")
 
 
+
 def check_no_nonmanifold_edges(cells):
     counter = Counter()
+
     for tri in cells:
         a, b, c = map(int, tri)
-        for e in ((a, b), (b, c), (c, a)):
-            counter[tuple(sorted(e))] += 1
+
+        for i, j in ((a, b), (b, c), (c, a)):
+            edge = (i, j) if i < j else (j, i)
+            counter[edge] += 1
+
     for edge, count in counter.items():
         if count > 2:
             raise ValueError(f"Nonmanifold edge {edge}: used by {count} cells")
-
 
 def check_mesh(mesh):
     cells = getattr(mesh, "cells", getattr(mesh, "cells", None))

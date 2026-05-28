@@ -6,7 +6,7 @@ def construct_inner_faces(mesh):
     mesh.topology.cells_of_inner_faces = mesh.topology.cells_of_faces[mesh.topology.inner_faces]
 
 
-def construct_faces_from_cells_vec(mesh, build_edge2face=True):
+def construct_faces_from_cells(mesh, build_edge2face=True):
     """
     Vectorized construction of triangular mesh topology.
 
@@ -42,34 +42,27 @@ def construct_faces_from_cells_vec(mesh, build_edge2face=True):
     edges[:, 0] = lo
     edges[:, 1] = hi
 
-    # Owner cell and local face number for each edge occurrence.
-    owners = np.repeat(np.arange(ncells, dtype=np.int64), 3)
-    local = np.tile(np.arange(3, dtype=np.int64), ncells)
+    npoints = mesh.geometry.points.shape[0]
 
-    # ------------------------------------------------------------
-    # Sort edges lexicographically.
-    # Equal edges are now consecutive.
-    # ------------------------------------------------------------
-    order = np.lexsort((edges[:, 1], edges[:, 0]))
+    keys = lo * npoints + hi
+    order = np.argsort(keys)
+    #
+    # keys_s = keys[order]
+    # edges_s = edges[order]
+    owners_s = order // 3
+    local_s = order % 3
 
-    edges_s = edges[order]
-    owners_s = owners[order]
-    local_s = local[order]
+    keys_s = keys[order]
 
-    # ------------------------------------------------------------
-    # Detect first occurrence of every distinct edge.
-    # ------------------------------------------------------------
-    is_new = np.empty(edges_s.shape[0], dtype=bool)
+    is_new = np.empty(keys_s.shape[0], dtype=bool)
     is_new[0] = True
-    is_new[1:] = (
-        (edges_s[1:, 0] != edges_s[:-1, 0])
-        | (edges_s[1:, 1] != edges_s[:-1, 1])
-    )
+    is_new[1:] = keys_s[1:] != keys_s[:-1]
 
     face_ids_s = np.cumsum(is_new, dtype=np.int64) - 1
-    nfaces = int(face_ids_s[-1]) + 1
+    first_pos = np.flatnonzero(is_new)
+    unique_keys = keys_s[first_pos]
 
-    faces = edges_s[is_new].copy()
+    faces = np.column_stack((unique_keys // npoints, unique_keys % npoints)).astype(np.int64)
 
     # ------------------------------------------------------------
     # faces_of_cells[icell, iloc] = global face index
@@ -81,7 +74,8 @@ def construct_faces_from_cells_vec(mesh, build_edge2face=True):
     # cells_of_faces[iface] = [left_cell, right_cell or -1]
     # ------------------------------------------------------------
     first_pos = np.flatnonzero(is_new)
-    counts = np.diff(np.r_[first_pos, edges_s.shape[0]])
+    # counts = np.diff(np.r_[first_pos, edges_s.shape[0]])
+    counts = np.diff(np.r_[first_pos, keys_s.shape[0]])
 
     if np.any(counts > 2):
         bad = int(np.flatnonzero(counts > 2)[0])
@@ -90,6 +84,7 @@ def construct_faces_from_cells_vec(mesh, build_edge2face=True):
             f"used by {int(counts[bad])} cells"
         )
 
+    nfaces = int(face_ids_s[-1]) + 1
     cells_of_faces = np.full((nfaces, 2), -1, dtype=np.int64)
     cells_of_faces[:, 0] = owners_s[first_pos]
 
@@ -123,108 +118,3 @@ def construct_faces_from_cells_vec(mesh, build_edge2face=True):
     assert mesh.topology.faces_of_cells.max() < mesh.nfaces
 
     return faces, faces_of_cells, cells_of_faces
-def construct_faces_from_cells_dict(mesh):
-    cells = mesh.cells
-    ncells = cells.shape[0]
-
-    faces = []
-    faces_of_cells = np.empty((ncells, 3), dtype=int)
-    cells_of_faces = []
-    edge2face = {}
-
-    local_edges = ((1, 2), (2, 0), (0, 1))
-
-    for icell, cell in enumerate(cells):
-        for iloc, (a, b) in enumerate(local_edges):
-            i = int(cell[a])
-            j = int(cell[b])
-            if i > j:
-                i, j = j, i
-
-            edge = (i, j)
-            iface = edge2face.get(edge)
-
-            if iface is None:
-                iface = len(faces)
-                edge2face[edge] = iface
-                faces.append(edge)
-                cells_of_faces.append([icell, -1])
-            else:
-                if cells_of_faces[iface][1] != -1:
-                    raise ValueError(f"non-manifold edge {edge}")
-                cells_of_faces[iface][1] = icell
-
-            faces_of_cells[icell, iloc] = iface
-
-    faces = np.asarray(faces, dtype=int)
-    cells_of_faces = np.asarray(cells_of_faces, dtype=int)
-
-    mesh.topology.faces = faces
-    mesh.topology.faces_of_cells = faces_of_cells
-    mesh.topology.cells_of_faces = cells_of_faces
-    mesh.edge2face = edge2face
-    mesh.nfaces = faces.shape[0]
-
-    return faces, faces_of_cells, cells_of_faces
-
-def construct_faces_from_cells(mesh):
-    cells = mesh.cells
-    ncells = cells.shape[0]
-    nnpc = cells.shape[1]
-
-    nd = np.logical_not(np.eye(nnpc, dtype=bool)).ravel()
-
-    if mesh.dimension == 2:
-        allfaces = np.empty((ncells, 3, 2), dtype=cells.dtype)
-        allfaces[:, 0, :] = np.sort(cells[:, [1, 2]], axis=1)  # opposite v0
-        allfaces[:, 1, :] = np.sort(cells[:, [2, 0]], axis=1)  # opposite v1
-        allfaces[:, 2, :] = np.sort(cells[:, [0, 1]], axis=1)  # opposite v2
-        allfaces = allfaces.reshape(3 * ncells, 2)
-    else:
-        nd = np.logical_not(np.eye(nnpc, dtype=bool)).ravel()
-        allfaces = np.sort(
-            np.tile(cells, nnpc)[:, nd].reshape(ncells, nnpc, nnpc - 1),
-            axis=2,
-        ).reshape(nnpc * ncells, nnpc - 1)
-        # allfaces = np.sort(
-        #     np.tile(cells, nnpc)[:, nd].reshape(ncells, nnpc, nnpc - 1),
-        #     axis=2,
-        # ).reshape(nnpc * ncells, nnpc - 1)
-
-    if mesh.dimension == 1:
-        perm = np.argsort(allfaces, axis=0).ravel()
-    else:
-        dtype = ",".join([str(allfaces.dtype)] * (nnpc - 1))
-        order = [f"f{i}" for i in range(nnpc - 1)]
-        perm = np.argsort(allfaces.view(dtype), order=order, axis=0).ravel()
-
-    allfaces_sorted = allfaces[perm]
-    faces, indices = np.unique(allfaces_sorted, return_inverse=True, axis=0)
-
-    faces_of_cells = np.zeros((ncells, nnpc), dtype=np.int64)
-
-    locindex = np.tile(np.arange(nnpc), ncells).ravel()
-    cellindex = np.repeat(np.arange(ncells), nnpc)
-
-    faces_of_cells[cellindex[perm], locindex[perm]] = indices
-
-    flat_faces = faces_of_cells.ravel()
-    flat_cells = np.repeat(np.arange(ncells), nnpc)
-
-    order2 = np.argsort(flat_faces)
-    sf = flat_faces[order2]
-    sc = flat_cells[order2]
-
-    counts = np.bincount(sf, minlength=faces.shape[0])
-    starts = np.r_[0, np.cumsum(counts[:-1])]
-
-    first_cell = sc[starts]
-    second_cell = -np.ones(faces.shape[0], dtype=np.int64)
-
-    mask = counts == 2
-    second_cell[mask] = sc[starts[mask] + 1]
-
-    mesh.topology.cells_of_faces = np.vstack([first_cell, second_cell]).T
-    mesh.topology.faces = faces
-    mesh.nfaces = faces.shape[0]
-    mesh.topology.faces_of_cells = faces_of_cells

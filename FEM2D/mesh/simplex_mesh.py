@@ -111,7 +111,7 @@ class SimplexMesh:
                 }
     def _rebuild(self, timer=None):
         with timer("construct_faces_from_cells") if timer else nullcontext():
-            topology.construct_faces_from_cells_vec(self)
+            topology.construct_faces_from_cells(self)
         with timer("construct_centers_normals_volumes") if timer else nullcontext():
             self.ncells = self.topology.cells.shape[0]
             self.nfaces = self.topology.faces.shape[0]

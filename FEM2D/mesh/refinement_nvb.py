@@ -13,134 +13,36 @@ This avoids fragile incremental updates of faces_of_cells/cells_of_faces.
 import numpy as np
 from contextlib import nullcontext
 
-from FEM2D.mesh.mesh_edges import sorted_edge
 from FEM2D.mesh.mesh_checks import check_no_degenerate_cells, check_no_nonmanifold_edges, check_boundary_normals
 
-from collections import defaultdict, deque
 
 from FEM2D.mesh.refinement_info import RefinementInfo
 from FEM2D.mesh.simplex_mesh import SimplexMesh
+from FEM2D.mesh.refine_cell_nvb_iterative import _refine_cell_nvb_iterative, _refine_cell_nvb_iterative_keyed
 
 
 def _timed(timer, name):
     return timer(name) if timer is not None else nullcontext()
 
-def _cell_edges(tri):
-    a, b, c = map(int, tri)
-    return {
-        sorted_edge(a, b),
-        sorted_edge(b, c),
-        sorted_edge(c, a),
-    }
-
-
-def _refine_cell_nvb_iterative(tri, refedge, marked_edges, points, new_points, edge_to_mid):
-    out_cells = []
-    out_refs = []
-
-    # stack = [(list(map(int, tri)), sorted_edge(refedge[0], refedge[1]))]
-    a, b = int(refedge[0]), int(refedge[1])
-    stack = [(list(map(int, tri)), (a, b) if a < b else (b, a))]
-
-    while stack:
-        tri, refedge = stack.pop()
-
-        v0, v1, v2 = tri
-        # e01 = sorted_edge(v0, v1)
-        # e12 = sorted_edge(v1, v2)
-        # e20 = sorted_edge(v2, v0)
-        e01 = (v0, v1) if v0 < v1 else (v1, v0)
-        e12 = (v1, v2) if v1 < v2 else (v2, v1)
-        e20 = (v2, v0) if v2 < v0 else (v0, v2)
-
-        if e01 not in marked_edges and e12 not in marked_edges and e20 not in marked_edges:
-            out_cells.append(tri)
-            out_refs.append(refedge)
-            continue
-
-        a, b = refedge
-        c = _third_vertex(tri, a, b)
-
-        m = _edge_midpoint((a, b), points, edge_to_mid, new_points)
-
-        child0 = [c, a, m]
-        child1 = [b, c, m]
-
-        # ref0 = sorted_edge(c, a)
-        # ref1 = sorted_edge(b, c)
-        ref0 = (c, a) if c < a else (a, c)
-        ref1 = (b, c) if b < c else (c, b)
-
-        stack.append((child1, ref1))
-        stack.append((child0, ref0))
-
-    return out_cells, out_refs
-def _refine_cell_recursive_nvb(tri, refedge, marked_edges, points, new_points, edge_to_mid,):
-    tri = list(map(int, tri))
-    refedge = sorted_edge(refedge[0], refedge[1])
-
-    # stop if this triangle has no marked boundary edge
-    if _cell_edges(tri).isdisjoint(marked_edges):
-        return [tri], [refedge]
-
-    a, b = refedge
-    c = _third_vertex(tri, a, b)
-
-    m = _edge_midpoint(
-        (a, b),
-        points,
-        edge_to_mid,
-        new_points,
-    )
-
-    child0 = [c, a, m]
-    child1 = [b, c, m]
-
-    ref0 = sorted_edge(c, a)
-    ref1 = sorted_edge(b, c)
-
-    cells0, refs0 = _refine_cell_recursive_nvb(
-        child0, ref0, marked_edges, points, new_points, edge_to_mid
-    )
-    cells1, refs1 = _refine_cell_recursive_nvb(
-        child1, ref1, marked_edges, points, new_points, edge_to_mid
-    )
-
-    return cells0 + cells1, refs0 + refs1
-
-
-def check_refedges(mesh, where=""):
-    for icell, tri in enumerate(mesh.topology.cells):
-        tri = list(map(int, tri))
-        e = tuple(map(int, mesh.refedges[icell]))
-
-        cell_edges = {
-            sorted_edge(tri[0], tri[1]),
-            sorted_edge(tri[1], tri[2]),
-            sorted_edge(tri[2], tri[0]),
-        }
-
-        if sorted_edge(e[0], e[1]) not in cell_edges:
-            print("BAD REFEDGE", where)
-            print("  icell =", icell)
-            print("  tri   =", tri)
-            print("  ref   =", e)
-            print("  cell_edges =", cell_edges)
-            raise RuntimeError("mesh.refedges is not aligned with mesh.topology.cells")
 
 def _longest_edge_refedges(mesh):
     refedges = []
+    points = mesh.geometry.points
+
     for tri in mesh.topology.cells:
         a, b, c = map(int, tri)
-        edges = [(a, b), (b, c), (c, a)]
-        lengths = [
-            np.linalg.norm(mesh.geometry.points[i] - mesh.geometry.points[j])
-            for i, j in edges
-        ]
-        e = edges[int(np.argmax(lengths))]
-        refedges.append(sorted_edge(e[0], e[1]))
-    return np.asarray(refedges, dtype=int)
 
+        edges = ((a, b), (b, c), (c, a))
+        lengths = (
+            np.linalg.norm(points[a] - points[b]),
+            np.linalg.norm(points[b] - points[c]),
+            np.linalg.norm(points[c] - points[a]),
+        )
+
+        i, j = edges[int(np.argmax(lengths))]
+        refedges.append((i, j) if i < j else (j, i))
+
+    return np.asarray(refedges, dtype=np.int64)
 
 def _ensure_refedges(mesh):
     if not hasattr(mesh, "refedges") or mesh.refedges is None:
@@ -148,20 +50,6 @@ def _ensure_refedges(mesh):
     return mesh.refedges
 
 
-def debug_nonmanifold_edges(cells):
-    edge_to_cells = defaultdict(list)
-    for ic, c in enumerate(cells):
-        c = list(map(int, c))
-        for a, b in [(c[0], c[1]), (c[1], c[2]), (c[2], c[0])]:
-            e = tuple(sorted((a, b)))
-            edge_to_cells[e].append(ic)
-
-    for e, cs in edge_to_cells.items():
-        if len(cs) > 2:
-            print("NONMANIFOLD EDGE", e, "cells", cs)
-            for ic in cs:
-                print("  cell", ic, cells[ic])
-            raise ValueError(f"Nonmanifold edge {e}: used by {len(cs)} cells")
 
 def _third_vertex(tri, a, b):
     for v in tri:
@@ -186,14 +74,10 @@ def _split_boundary_labels(mesh, edge_to_mid):
 
         for f in faces:
             a, b = mesh.topology.faces[f]
-            # e = sorted_edge(a, b)
-            # a, b = int(a), int(b)
             e = (a, b) if a < b else (b, a)
 
             if e in edge_to_mid:
                 m = edge_to_mid[e]
-                # new_faces.append(sorted_edge(a, m))
-                # new_faces.append(sorted_edge(m, b))
                 new_faces.append((a, m) if a < m else (m, a))
                 new_faces.append((m, b) if m < b else (b, m))
             else:
@@ -213,14 +97,13 @@ def _apply_boundary_labels(mesh, boundary_edge_labels):
         return
 
     face_to_id = mesh.edge2face
-    # face_to_id = face_dict(mesh.topology.faces)
     bdrylabels = {}
 
     for label, edges in boundary_edge_labels.items():
         ids = []
 
         for a, b in edges:
-            edge = sorted_edge(a, b)
+            edge = (a, b) if a < b else (b, a)
             iface = face_to_id.get(edge)
 
             if iface is not None:
@@ -230,6 +113,103 @@ def _apply_boundary_labels(mesh, boundary_edge_labels):
 
     mesh.labels.boundary = bdrylabels
 
+def _refine_cell_nvb_write(tri, refedge,
+    marked_keys, key_to_mid, nkey,
+    new_cells, new_refedges,
+    pos, maxpos):
+    a = int(tri[0]); b = int(tri[1]); c = int(tri[2])
+    r0 = int(refedge[0]); r1 = int(refedge[1])
+
+    stack = [(a, b, c, r0, r1)]
+
+    while stack:
+        a, b, c, r0, r1 = stack.pop()
+
+        key = r0 * nkey + r1 if r0 < r1 else r1 * nkey + r0
+
+        if key not in marked_keys:
+            if pos >= maxpos:
+                raise RuntimeError(f"max_new_cells too small: allocated {maxpos}")
+
+            new_cells[pos, 0] = a
+            new_cells[pos, 1] = b
+            new_cells[pos, 2] = c
+            new_refedges[pos, 0] = r0
+            new_refedges[pos, 1] = r1
+            pos += 1
+            continue
+
+        m = key_to_mid[key]
+
+        if a != r0 and a != r1:
+            z = a
+        elif b != r0 and b != r1:
+            z = b
+        else:
+            z = c
+
+        stack.append((z, m, r1, z, r1))
+        stack.append((z, r0, m, z, r0))
+
+    return pos
+def close_marked_faces_nvb(cells_of_faces, cell_ref_faces, marked):
+    """
+    NVB closure using face indices.
+
+    Parameters
+    ----------
+    cells_of_faces : (nfaces, 2) int array
+        Adjacent cells of each face, with -1 on boundary.
+
+    cell_ref_faces : (ncells,) int array
+        Global face index of the refinement edge of each cell.
+
+    marked : (ncells,) bool array
+        Initially marked cells.
+
+    Returns
+    -------
+    marked_bool : (ncells,) bool array
+        Closed set of marked cells.
+
+    refine_face : (nfaces,) bool array
+        Faces/edges that must be bisected.
+
+    refined_faces : int array
+        Indices of faces/edges that must be bisected.
+    """
+    marked_bool = np.asarray(marked, dtype=bool).copy()
+
+    ncells = cell_ref_faces.shape[0]
+    nfaces = cells_of_faces.shape[0]
+
+    refine_face = np.zeros(nfaces, dtype=bool)
+
+    queue = np.empty(ncells, dtype=np.int64)
+    initial = np.flatnonzero(marked_bool)
+
+    queue[:initial.size] = initial
+    head = 0
+    tail = initial.size
+
+    while head < tail:
+        icell = queue[head]
+        head += 1
+
+        iface = cell_ref_faces[icell]
+        refine_face[iface] = True
+
+        c0, c1 = cells_of_faces[iface]
+        nb = c1 if c0 == icell else c0
+
+        if nb >= 0 and not marked_bool[nb]:
+            marked_bool[nb] = True
+            queue[tail] = nb
+            tail += 1
+
+    refined_faces = np.flatnonzero(refine_face)
+
+    return marked_bool, refine_face, refined_faces
 # ====================================================================== #
 def refine_nvb(mesh, marked, debug=False, timer=None):
     """
@@ -255,39 +235,34 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
     # Closure propagation
     # ------------------------------------------------------------------ #
     with _timed(timer, "closure"):
-        refine_edge = np.zeros(mesh.topology.faces.shape[0], dtype=bool)
-
         refedges = _ensure_refedges(mesh)
 
         if debug:
+            if debug:
+                from FEM2D.mesh.nvb_debug import check_refedges, debug_nonmanifold_edges
             check_refedges(mesh, "entry")
 
-        cell_ref_faces = np.empty(ncells, dtype=int)
+        cell_ref_faces = np.empty(ncells, dtype=np.int64)
 
         for icell in range(ncells):
             a, b = map(int, refedges[icell])
             edge = (a, b) if a < b else (b, a)
-            cell_ref_faces[icell] = fmap[edge]
+            cell_ref_faces[icell] = mesh.edge2face[edge]
 
-        queue = deque()
+        marked_bool, refine_edge, refined_faces = close_marked_faces_nvb(
+            mesh.topology.cells_of_faces,
+            cell_ref_faces,
+            marked,
+        )
+    # ------------------------------------------------------------------ #
+    # Marked edges as tuples
+    # ------------------------------------------------------------------ #
+    with _timed(timer, "marked_edges_set"):
+        marked_edges = set()
 
-        for icell in np.flatnonzero(marked):
-            iref = cell_ref_faces[icell]
-            if not refine_edge[iref]:
-                refine_edge[iref] = True
-                queue.append(iref)
-
-        while queue:
-            iface = queue.popleft()
-
-            for icell in mesh.topology.cells_of_faces[iface]:
-                if icell < 0:
-                    continue
-
-                iref = cell_ref_faces[icell]
-                if not refine_edge[iref]:
-                    refine_edge[iref] = True
-                    queue.append(iref)
+        for iface in refined_faces:
+            a, b = map(int, faces[iface])
+            marked_edges.add((a, b) if a < b else (b, a))
 
     # ------------------------------------------------------------------ #
     # New midpoint vertices
@@ -295,7 +270,7 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
     with _timed(timer, "new_points"):
         edge_to_mid = {}
 
-        refined_faces = np.flatnonzero(refine_edge)
+        # refined_faces = np.flatnonzero(refine_edge)
         n_old = points.shape[0]
         n_new = refined_faces.size
 
@@ -319,22 +294,30 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
         for label, ids in mesh.labels.cell.items():
             old_celllabels[np.asarray(ids, dtype=int)] = label
 
-    # ------------------------------------------------------------------ #
-    # Marked edges as tuples
-    # ------------------------------------------------------------------ #
-    with _timed(timer, "marked_edges_set"):
-        marked_edges = set()
-
-        for iface in refined_faces:
-            a, b = map(int, faces[iface])
-            marked_edges.add((a, b) if a < b else (b, a))
 
     # ------------------------------------------------------------------ #
     # Refine cells, with preallocated global arrays
     # ------------------------------------------------------------------ #
     with _timed(timer, "refine_cells_loop"):
+
+        nkey = len(new_points)
+        marked_edge_keys = set()
+        for a, b in marked_edges:
+            if a < b:
+                marked_edge_keys.add(a * nkey + b)
+            else:
+                marked_edge_keys.add(b * nkey + a)
+
+        edgekey_to_mid = {}
+        for (a, b), m in edge_to_mid.items():
+            if a < b:
+                edgekey_to_mid[a * nkey + b] = m
+            else:
+                edgekey_to_mid[b * nkey + a] = m
+
         old_npoints = points.shape[0]
         old_ncells = cells.shape[0]
+
 
         # In conforming 2D NVB closure, 4*ncells is a safe first upper bound.
         # If this ever fails, increase to 8*ncells or add dynamic growth.
@@ -352,40 +335,32 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
             int(mid): tuple(map(int, edge))
             for edge, mid in edge_to_mid.items()
         }
-
         for icell in range(ncells):
-            tri = list(map(int, cells[icell]))
-            refedge = tuple(map(int, refedges[icell]))
-
-            childs, child_refs = _refine_cell_nvb_iterative(
-                tri,
-                refedge,
-                marked_edges,
-                points,
-                new_points,
-                edge_to_mid,
-            )
 
             first_child = nnew
-            nchild = len(childs)
 
-            if nnew + nchild > max_new_cells:
+            nnew = _refine_cell_nvb_write(
+                cells[icell],
+                refedges[icell],
+                marked_edge_keys,
+                edgekey_to_mid,
+                nkey,
+                new_cells,
+                new_refedges,
+                nnew,
+                max_new_cells,
+            )
+
+            if nnew > max_new_cells:
                 raise RuntimeError(
-                    f"max_new_cells too small: need at least {nnew + nchild}, "
+                    f"max_new_cells too small: need at least {nnew}, "
                     f"allocated {max_new_cells}"
                 )
 
-            label = old_celllabels[icell]
-
-            for child, ref in zip(childs, child_refs):
-                new_cells[nnew, :] = child
-                new_refedges[nnew, :] = ref
-                new_celllabels[nnew] = label
-                parent_cell_of_child[nnew] = icell
-                nnew += 1
+            new_celllabels[first_child:nnew] = old_celllabels[icell]
+            parent_cell_of_child[first_child:nnew] = icell
 
             child_cells_of_parent[icell] = list(range(first_child, nnew))
-
         new_cells = new_cells[:nnew]
         new_refedges = new_refedges[:nnew]
         new_celllabels = new_celllabels[:nnew]
