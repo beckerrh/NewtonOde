@@ -272,7 +272,7 @@ def meshWithBoundaries(mesh, **kwargs):
     else:
         ax = plt
 
-    lines = mesh.faces
+    lines = mesh.topology.faces
     bdrylabels = mesh.labels.boundary
 
     x, y, tris, _, _ = _mesh_arrays(mesh)

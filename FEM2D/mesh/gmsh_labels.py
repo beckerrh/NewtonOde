@@ -72,8 +72,8 @@ def parse_cell_sets(cell_sets, cells_dict, celltypes):
 def construct_boundary_labels(mesh, faces_gmsh, physlabels_gmsh):
     faces_gmsh = np.sort(np.asarray(faces_gmsh, dtype=np.int64), axis=1)
 
-    bdryids = np.flatnonzero(mesh.cells_of_faces[:, 1] == -1)
-    bdryfaces = np.sort(mesh.faces[bdryids], axis=1)
+    bdryids = np.flatnonzero(mesh.topology.cells_of_faces[:, 1] == -1)
+    bdryfaces = np.sort(mesh.topology.faces[bdryids], axis=1)
 
     nnpc = mesh.topology.cells.shape[1]
     dtype_g = ", ".join([str(faces_gmsh.dtype)] * (nnpc - 1))

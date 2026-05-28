@@ -52,7 +52,7 @@ class RT0():
             return np.einsum('ni, in -> n', nnormals, v.reshape(dim, nfaces))
         return np.einsum('ni, ni -> n', nnormals, v.reshape(nfaces,dim))
     def toCellMatrix(self):
-        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
         dim, dV, p, pc = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers
         simp = self.mesh.topology.cells
         dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)/dim
@@ -61,14 +61,14 @@ class RT0():
         cols = np.tile(faces_of_cells.ravel(), dim)
         return  sparse.coo_matrix((mat.ravel(), (rows.ravel(), cols.ravel())), shape=(dim*ncells, nfaces))
     def toCell(self, v):
-        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
         dim, dV, p, pc = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers
         simp = self.mesh.topology.cells
         dS2 = linalg.norm(normals, axis=1)
         sigma2 = sigma/dV[:,np.newaxis]/dim
         return np.einsum('ni,ni,nij,ni -> nj', v[faces_of_cells], sigma2, pc[:,np.newaxis,:dim]-p[simp,:dim], dS2[faces_of_cells])
     def constructMass(self, massproj = 'standard', diffinvcell=None):
-        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
         dim, dV, nloc, simp = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.dimension+1, self.mesh.cells
         p, pc, pf = self.mesh.points, self.mesh.cell_centers, self.mesh.face_centers
         # massproj = self.params_str['massproj']
@@ -257,7 +257,7 @@ class RT0():
         else:
             raise ValueError(f"unknown type {massproj=}")
     def constructDiv(self):
-        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
         nloc = self.mesh.dimension+1
         rows = np.repeat(np.arange(ncells), nloc)
         cols = faces_of_cells.ravel()

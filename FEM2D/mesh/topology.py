@@ -2,8 +2,8 @@ import numpy as np
 
 
 def construct_inner_faces(mesh):
-    mesh.innerfaces = mesh.cells_of_faces[:, 1] >= 0
-    mesh.cellsOfInteriorFaces = mesh.cells_of_faces[mesh.innerfaces]
+    mesh.topology.inner_faces = mesh.topology.cells_of_faces[:, 1] >= 0
+    mesh.topology.cells_of_inner_faces = mesh.topology.cells_of_faces[mesh.topology.inner_faces]
 
 
 def construct_faces_from_cells_vec(mesh, build_edge2face=True):
@@ -12,9 +12,9 @@ def construct_faces_from_cells_vec(mesh, build_edge2face=True):
 
     Sets
     ----
-    mesh.faces          : (nfaces, 2)
-    mesh.faces_of_cells : (ncells, 3)
-    mesh.cells_of_faces : (nfaces, 2)
+    mesh.topology.faces          : (nfaces, 2)
+    mesh.topology.faces_of_cells : (ncells, 3)
+    mesh.topology.cells_of_faces : (nfaces, 2)
     mesh.edge2face      : dict[(a,b)] -> iface, optional
 
     Local face convention:
@@ -100,9 +100,9 @@ def construct_faces_from_cells_vec(mesh, build_edge2face=True):
     # ------------------------------------------------------------
     # Install on mesh.
     # ------------------------------------------------------------
-    mesh.faces = faces
-    mesh.faces_of_cells = faces_of_cells
-    mesh.cells_of_faces = cells_of_faces
+    mesh.topology.faces = faces
+    mesh.topology.faces_of_cells = faces_of_cells
+    mesh.topology.cells_of_faces = cells_of_faces
     mesh.nfaces = nfaces
 
     if build_edge2face:
@@ -116,11 +116,11 @@ def construct_faces_from_cells_vec(mesh, build_edge2face=True):
     # ------------------------------------------------------------
     # Cheap invariants.
     # ------------------------------------------------------------
-    assert mesh.faces.shape == (mesh.nfaces, 2)
-    assert mesh.faces_of_cells.shape == (ncells, 3)
-    assert mesh.cells_of_faces.shape == (mesh.nfaces, 2)
-    assert mesh.faces_of_cells.min() >= 0
-    assert mesh.faces_of_cells.max() < mesh.nfaces
+    assert mesh.topology.faces.shape == (mesh.nfaces, 2)
+    assert mesh.topology.faces_of_cells.shape == (ncells, 3)
+    assert mesh.topology.cells_of_faces.shape == (mesh.nfaces, 2)
+    assert mesh.topology.faces_of_cells.min() >= 0
+    assert mesh.topology.faces_of_cells.max() < mesh.nfaces
 
     return faces, faces_of_cells, cells_of_faces
 def construct_faces_from_cells_dict(mesh):
@@ -159,9 +159,9 @@ def construct_faces_from_cells_dict(mesh):
     faces = np.asarray(faces, dtype=int)
     cells_of_faces = np.asarray(cells_of_faces, dtype=int)
 
-    mesh.faces = faces
-    mesh.faces_of_cells = faces_of_cells
-    mesh.cells_of_faces = cells_of_faces
+    mesh.topology.faces = faces
+    mesh.topology.faces_of_cells = faces_of_cells
+    mesh.topology.cells_of_faces = cells_of_faces
     mesh.edge2face = edge2face
     mesh.nfaces = faces.shape[0]
 
@@ -224,7 +224,7 @@ def construct_faces_from_cells(mesh):
     mask = counts == 2
     second_cell[mask] = sc[starts[mask] + 1]
 
-    mesh.cells_of_faces = np.vstack([first_cell, second_cell]).T
-    mesh.faces = faces
+    mesh.topology.cells_of_faces = np.vstack([first_cell, second_cell]).T
+    mesh.topology.faces = faces
     mesh.nfaces = faces.shape[0]
-    mesh.faces_of_cells = faces_of_cells
+    mesh.topology.faces_of_cells = faces_of_cells

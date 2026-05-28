@@ -185,7 +185,7 @@ def _split_boundary_labels(mesh, edge_to_mid):
         new_faces = []
 
         for f in faces:
-            a, b = mesh.faces[f]
+            a, b = mesh.topology.faces[f]
             # e = sorted_edge(a, b)
             # a, b = int(a), int(b)
             e = (a, b) if a < b else (b, a)
@@ -213,7 +213,7 @@ def _apply_boundary_labels(mesh, boundary_edge_labels):
         return
 
     face_to_id = mesh.edge2face
-    # face_to_id = face_dict(mesh.faces)
+    # face_to_id = face_dict(mesh.topology.faces)
     bdrylabels = {}
 
     for label, edges in boundary_edge_labels.items():
@@ -246,7 +246,7 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
     if marked.shape[0] != ncells:
         raise ValueError("wrong size for marked")
 
-    faces = mesh.faces
+    faces = mesh.topology.faces
     fmap = mesh.edge2face
     cells = mesh.topology.cells
     points = mesh.points
@@ -255,7 +255,7 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
     # Closure propagation
     # ------------------------------------------------------------------ #
     with _timed(timer, "closure"):
-        refine_edge = np.zeros(mesh.faces.shape[0], dtype=bool)
+        refine_edge = np.zeros(mesh.topology.faces.shape[0], dtype=bool)
 
         refedges = _ensure_refedges(mesh)
 
@@ -280,7 +280,7 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
         while queue:
             iface = queue.popleft()
 
-            for icell in mesh.cells_of_faces[iface]:
+            for icell in mesh.topology.cells_of_faces[iface]:
                 if icell < 0:
                     continue
 

@@ -17,13 +17,10 @@ class MeshLabels:
 @dataclass
 class MeshTopology:
     cells: np.ndarray | None = None
-
-    # faces: np.ndarray | None = None
-    # faces_of_cells: np.ndarray | None = None
+    faces: np.ndarray | None = None
+    faces_of_cells: np.ndarray | None = None
     cells_of_faces: np.ndarray | None = None
-
-    # inner_faces: np.ndarray | None = None
-    # boundary_faces: np.ndarray | None = None
+    inner_faces: np.ndarray | None = None
 
 class SimplexMesh:
     """
@@ -32,7 +29,6 @@ class SimplexMesh:
 
     def __init__(self, points, cells, *, labels=None, rebuild=True, check=True):
         self.points = np.asarray(points, dtype=float)
-        # self.topology.cells = np.asarray(cells, dtype=np.int64)
 
         if self.points.ndim != 2:
             raise ValueError(f"points must be 2D, got {self.points.shape=}")
@@ -107,12 +103,10 @@ class SimplexMesh:
                 }
     def _rebuild(self, timer=None):
         with timer("construct_faces_from_cells") if timer else nullcontext():
-            # topology.construct_faces_from_cells(self)
-            # topology.construct_faces_from_cells_dict(self)
             topology.construct_faces_from_cells_vec(self)
         with timer("construct_centers_normals_volumes") if timer else nullcontext():
             self.ncells = self.topology.cells.shape[0]
-            self.nfaces = self.faces.shape[0]
+            self.nfaces = self.topology.faces.shape[0]
             geometry.construct_centers(self)
             geometry.construct_normals_and_volumes(self)
         with timer("construct_inner_faces") if timer else nullcontext():
@@ -133,7 +127,7 @@ class SimplexMesh:
             # if not isinstance(color, int):
             #     color = self.labeldict_s2i[color]
             facesdir = self.labels.boundary[color]
-            bdrypoints.append(np.unique(self.faces[facesdir].ravel()))
+            bdrypoints.append(np.unique(self.topology.faces[facesdir].ravel()))
         return np.array(bdrypoints).reshape(-1)
 
     def bdryFaces(self, colors=None):
@@ -149,14 +143,14 @@ class SimplexMesh:
         return faces
 
     def faces_of_cellsNotOnInnerFaces(self, ci0, ci1):
-        faces = self.faces[self.innerfaces]
+        faces = self.topology.faces[self.innerfaces]
         fi0_bis = np.empty_like(faces)
         fi1_bis = np.empty_like(faces)
         for i in range(faces.shape[1]):
-            fi0_bis[:, i] = self.faces_of_cells[ci0][
+            fi0_bis[:, i] = self.topology.faces_of_cells[ci0][
                 self.topology.cells[ci0] == faces[:, i][:, None]
             ]
-            fi1_bis[:, i] = self.faces_of_cells[ci1][
+            fi1_bis[:, i] = self.topology.faces_of_cells[ci1][
                 self.topology.cells[ci1] == faces[:, i][:, None]
             ]
         return fi0_bis, fi1_bis

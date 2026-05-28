@@ -40,12 +40,12 @@ class P1general():
     def computeMatrixLps(self, betart, lpsparam=0.1):
         dimension, dV, ndofs, nloc, dofspercell = self.mesh.dimension, self.mesh.cell_volumes, self.nunknowns(), self.nlocal(), self.dofspercell()
         if not hasattr(self.mesh,'innerfaces'): self.mesh.constructInnerFaces()
-        ci = self.mesh.cellsOfInteriorFaces
+        ci = self.mesh.topology.cells_of_inner_faces
         ci0, ci1 = ci[:,0], ci[:,1]
-        normalsS = self.mesh.normals[self.mesh.innerfaces]
+        normalsS = self.mesh.normals[self.mesh.topology.inner_faces]
         dS = linalg.norm(normalsS, axis=1)
         scale = 0.5*(dV[ci0]+ dV[ci1])
-        betan = np.absolute(betart[self.mesh.innerfaces])
+        betan = np.absolute(betart[self.mesh.topology.inner_faces])
         # betan = 0.5*(np.linalg.norm(betaC[ci0],axis=1)+ np.linalg.norm(betaC[ci1],axis=1))
         scale *= lpsparam*dS*betan
         cg0 = self.cellgrads[ci0, :, :]
@@ -66,12 +66,12 @@ class P1general():
     def computeFormLps(self, du, u, betart, lpsparam=0.1):
         # assert 0
         dimension, dV, ndofs, nloc, dofspercell = self.mesh.dimension, self.mesh.cell_volumes, self.nunknowns(), self.nlocal(), self.dofspercell()
-        ci = self.mesh.cellsOfInteriorFaces
+        ci = self.mesh.topology.cells_of_inner_faces
         ci0, ci1 = ci[:,0], ci[:,1]
-        normalsS = self.mesh.normals[self.mesh.innerfaces]
+        normalsS = self.mesh.normals[self.mesh.topology.inner_faces]
         dS = linalg.norm(normalsS, axis=1)
         scale = 0.5*(dV[ci0]+ dV[ci1])
-        betan = np.absolute(betart[self.mesh.innerfaces])
+        betan = np.absolute(betart[self.mesh.topology.inner_faces])
         scale *= lpsparam*dS*betan
         cg0 = self.cellgrads[ci0, :, :]
         cg1 = self.cellgrads[ci1, :, :]

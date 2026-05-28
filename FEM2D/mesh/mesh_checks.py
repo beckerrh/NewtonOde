@@ -15,8 +15,8 @@ def check_faces_of_cells_local_order(mesh):
         ]
 
         for iloc in range(3):
-            f = mesh.faces_of_cells[ic, iloc]
-            got = sorted_edge(*mesh.faces[f])
+            f = mesh.topology.faces_of_cells[ic, iloc]
+            got = sorted_edge(*mesh.topology.faces[f])
             if got != expected[iloc]:
                 raise ValueError(
                     f"bad faces_of_cells ordering at cell {ic}, local {iloc}: "
@@ -32,7 +32,7 @@ def check_boundary_normals(mesh, tol=1e-12):
 
     for color, faces in mesh.labels.boundary.items():
         for f in faces:
-            cells = mesh.cells_of_faces[f]
+            cells = mesh.topology.cells_of_faces[f]
             cells = np.asarray(cells)
             cells = cells[cells >= 0]
             if len(cells) != 1:
@@ -76,9 +76,9 @@ def check_mesh(mesh):
     check_faces_of_cells_local_order(mesh)
     print("nnodes", mesh.nnodes, mesh.points.shape[0])
     print("ncells", mesh.ncells, mesh.cells.shape[0])
-    print("nfaces", mesh.nfaces, mesh.faces.shape[0])
+    print("nfaces", mesh.nfaces, mesh.topology.faces.shape[0])
     print("simp max", mesh.cells.max())
-    print("faces max", mesh.faces.max())
+    print("faces max", mesh.topology.faces.max())
     print("dV min/max", mesh.cell_volumes.min(), mesh.cell_volumes.max())
     print("bad dV", np.sum(mesh.cell_volumes <= 0))
     print("cell labels", {k: len(v) for k, v in mesh.labels.cell.items()})

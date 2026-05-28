@@ -38,8 +38,8 @@ def from_meshio(mesh):
 
     smesh.pygmsh = mesh
     smesh.cellsname = simplex_name
-    smesh.facesname = face_name
-    smesh.facesdata = np.asarray(mesh.cells_dict[face_name], dtype=np.int64)
+    smesh.topology.facesname = face_name
+    smesh.topology.facesdata = np.asarray(mesh.cells_dict[face_name], dtype=np.int64)
 
     gmsh_labels.attach_gmsh_labels(
         smesh,
