@@ -22,34 +22,42 @@ class MeshTopology:
     cells_of_faces: np.ndarray | None = None
     inner_faces: np.ndarray | None = None
 
+@dataclass
+class MeshGeometry:
+    points: np.ndarray | None = None
+    cell_centers: np.ndarray | None = None
+    face_centers: np.ndarray | None = None
+    cell_volumes: np.ndarray | None = None
+    normals: np.ndarray | None = None
+
 class SimplexMesh:
     """
     Simplicial mesh container.
     """
 
     def __init__(self, points, cells, *, labels=None, rebuild=True, check=True):
-        self.points = np.asarray(points, dtype=float)
-
-        if self.points.ndim != 2:
-            raise ValueError(f"points must be 2D, got {self.points.shape=}")
-
-        if self.points.shape[1] == 2:
-            self.points = np.column_stack(
-                [self.points, np.zeros(self.points.shape[0])]
-            )
-
-        if self.points.shape[1] != 3:
-            raise ValueError(
-                f"points must have 2 or 3 columns, got {self.points.shape=}"
-            )
-
-        self.nnodes = self.points.shape[0]
-
         self.labels = MeshLabels()
         self.topology = MeshTopology()
         self.topology.cells = np.asarray(cells, dtype=np.int64)
+        self.geometry = MeshGeometry()
 
+        self.geometry.points = np.asarray(points, dtype=float)
 
+        if self.geometry.points.ndim != 2:
+            raise ValueError(f"points must be 2D, got {self.geometry.points.shape=}")
+
+        if self.geometry.points.shape[1] == 2:
+            self.geometry.points = np.column_stack(
+                [self.geometry.points, np.zeros(self.geometry.points.shape[0])]
+            )
+
+        if self.geometry.points.shape[1] != 3:
+            raise ValueError(
+                f"points must have 2 or 3 columns, got {self.geometry.points.shape=}"
+            )
+
+        self.nnodes = self.geometry.points.shape[0]
+        self.ncells = self.topology.cells.shape[0]
         self.dimension = self.topology.cells.shape[1] - 1
 
         if labels is not None:
@@ -81,14 +89,14 @@ class SimplexMesh:
             timer=timer,
         )
 
-    def constructInnerFaces(self):
+    def construct_inner_faces(self):
         from FEM2D.mesh.topology import construct_inner_faces
         construct_inner_faces(self)
 
     def finalize_after_topology_change(self, timer):
-        self.points = np.asarray(self.points)
+        self.geometry.points = np.asarray(self.geometry.points)
         self.topology.cells = np.asarray(self.topology.cells, dtype=int)
-        self.nnodes = self.points.shape[0]
+        self.nnodes = self.geometry.points.shape[0]
         self.ncells = self.topology.cells.shape[0]
         with timer("rebuild") if timer else nullcontext():
             self._rebuild(timer=timer)
@@ -143,7 +151,7 @@ class SimplexMesh:
         return faces
 
     def faces_of_cellsNotOnInnerFaces(self, ci0, ci1):
-        faces = self.topology.faces[self.innerfaces]
+        faces = self.topology.faces[self.topology.inner_faces]
         fi0_bis = np.empty_like(faces)
         fi1_bis = np.empty_like(faces)
         for i in range(faces.shape[1]):

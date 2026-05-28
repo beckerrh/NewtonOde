@@ -23,7 +23,7 @@ class P1(p1general.P1general):
     def nunknowns(self): return self.mesh.nnodes
     def dofspercell(self): return self.mesh.topology.cells
     def computeCellGrads(self):
-        ncells, normals, cells_of_faces, faces_of_cells, dV = self.mesh.ncells, self.mesh.normals, self.mesh.topology.cells_of_faces, self.mesh.topology.faces_of_cells, self.mesh.cell_volumes
+        ncells, normals, cells_of_faces, faces_of_cells, dV = self.mesh.ncells, self.mesh.geometry.normals, self.mesh.topology.cells_of_faces, self.mesh.topology.faces_of_cells, self.mesh.geometry.cell_volumes
         scale = -1/self.mesh.dimension
         return scale*(normals[faces_of_cells].T * self.mesh.sigma.T / dV.T).T
     def tonode(self, u): return u
@@ -74,7 +74,7 @@ class P1(p1general.P1general):
         # method = self.params_str['dirichletmethod']
         # if method not in ['strong','new']: return
         nodesdir, nodedirall, nodesinner, nodesdirflux = bdrydata.nodesdir, bdrydata.nodedirall, bdrydata.nodesinner, bdrydata.nodesdirflux
-        x, y, z = self.mesh.points.T
+        x, y, z = self.mesh.geometry.points.T
         for color, nodes in nodesdirflux.items():
             bdrydata.bsaved[color] = b[nodes]
         if method == 'strong':
@@ -109,9 +109,9 @@ class P1(p1general.P1general):
         massloc = barycentric.tensor(d=dim - 1, k=2)
         massloc = np.diag(np.sum(massloc,axis=1))
         faces = self.mesh.bdryFaces(colors)
-        nodes, cells, normalsS = self.mesh.topology.faces[faces], self.mesh.topology.cells_of_faces[faces,0], self.mesh.normals[faces,:dim]
+        nodes, cells, normalsS = self.mesh.topology.faces[faces], self.mesh.topology.cells_of_faces[faces,0], self.mesh.geometry.normals[faces,:dim]
         dS = linalg.norm(normalsS, axis=1)
-        simp, dV = self.mesh.topology.cells[cells], self.mesh.cell_volumes[cells]
+        simp, dV = self.mesh.topology.cells[cells], self.mesh.geometry.cell_volumes[cells]
         dS *= nitsche_param * coeff * diffcoff[cells] * dS / dV
         r = np.einsum('n,kl,nl->nk', dS, massloc, udir[nodes])
         np.add.at(b, nodes, r)
@@ -125,10 +125,10 @@ class P1(p1general.P1general):
         massloc = tools.barycentric.tensor(d=dim - 1, k=2)
         massloc = np.diag(np.sum(massloc,axis=1))
         faces = self.mesh.bdryFaces(colorsdir)
-        nodes, cells, normalsS = self.mesh.topology.faces[faces], self.mesh.topology.cells_of_faces[faces,0], self.mesh.normals[faces,:dim]
+        nodes, cells, normalsS = self.mesh.topology.faces[faces], self.mesh.topology.cells_of_faces[faces,0], self.mesh.geometry.normals[faces,:dim]
         dS = linalg.norm(normalsS, axis=1)
         simp, dV = self.mesh.topology.cells[
-cells], self.mesh.cell_volumes[cells]
+cells], self.mesh.geometry.cell_volumes[cells]
         dS *= nitsche_param * diffcoff[cells] * dS / dV
         r = np.einsum('n,kl,nl->nk', dS, massloc, u[nodes])
         np.add.at(du, nodes, r)
@@ -142,9 +142,9 @@ cells], self.mesh.cell_volumes[cells]
         nnodes, ncells, dim, nlocal  = self.mesh.nnodes, self.mesh.ncells, self.mesh.dimension, self.nlocal()
         faces = self.mesh.bdryFaces(colors)
         cells = self.mesh.topology.cells_of_faces[faces, 0]
-        normalsS = self.mesh.normals[faces, :dim]
+        normalsS = self.mesh.geometry.normals[faces, :dim]
         dS = np.linalg.norm(normalsS, axis=1)
-        dV = self.mesh.cell_volumes[cells]
+        dV = self.mesh.geometry.cell_volumes[cells]
         cellgrads = self.cellgrads[cells, :, :dim]
         simp = self.mesh.topology.cells[
 cells]
@@ -171,23 +171,23 @@ cells]
         massloc = np.diag(np.sum(massloc,axis=1))
         for i,color in enumerate(colors):
             faces = self.mesh.labels.boundary[color]
-            normalsS = self.mesh.normals[faces,:dim]
+            normalsS = self.mesh.geometry.normals[faces,:dim]
             dS = linalg.norm(normalsS, axis=1)
             nodes = self.mesh.topology.faces[faces]
             cells = self.mesh.topology.cells_of_faces[faces,0]
             simp = self.mesh.topology.cells[
 cells]
             cellgrads = self.cellgrads[cells, :, :dim]
-            dV = self.mesh.cell_volumes[cells]
+            dV = self.mesh.geometry.cell_volumes[cells]
             flux[i] = np.einsum('nj,n,ni,nji->', u[simp], diffcoff[cells], normalsS, cellgrads)
             uD = u[nodes]-udir[nodes]
-            dV = self.mesh.cell_volumes[cells]
+            dV = self.mesh.geometry.cell_volumes[cells]
             flux[i] -= np.einsum('n,kl,nl->', nitsche_param * diffcoff[cells] * dS**2 / dV, massloc, uD)
             # flux[i] /= np.sum(dS)
         return flux
     # interpolate
     def interpolate(self, f):
-        x, y, z = self.mesh.points.T
+        x, y, z = self.mesh.geometry.points.T
         return f(x, y, z)
     def interpolateBoundary(self, colors, f, lumped=False):
         """
@@ -202,12 +202,12 @@ cells]
         for color in colors:
             if not color in f or not f[color]: continue
             faces = self.mesh.labels.boundary[color]
-            normalsS = self.mesh.normals[faces]
+            normalsS = self.mesh.geometry.normals[faces]
             dS = linalg.norm(normalsS,axis=1)
             normalsS = normalsS/dS[:,np.newaxis]
             nx, ny, nz = normalsS.T
             nodes = np.unique(self.mesh.topology.faces[faces].reshape(-1))
-            x, y, z = self.mesh.points[nodes].T
+            x, y, z = self.mesh.geometry.points[nodes].T
             # constant normal !!
             nx, ny, nz = np.mean(normalsS, axis=0)
             try:
@@ -218,7 +218,7 @@ cells]
     # matrices
     def masslocal(self): return tools.barycentric.tensor(d=self.mesh.dimension, k=2)
     def computeMassMatrix(self, coeff=1, lumped=False):
-        dim, dV, nnodes = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.nnodes
+        dim, dV, nnodes = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.nnodes
         if lumped:
             mass = coeff/(dim+1)*dV.repeat(dim+1)
             rows = self.mesh.cells.ravel()
@@ -234,7 +234,7 @@ cells]
         if colors is None: colors = self.mesh.labels.boundary.keys()
         for color in colors:
             faces = self.mesh.labels.boundary[color]
-            normalsS = self.mesh.normals[faces]
+            normalsS = self.mesh.geometry.normals[faces]
             if isinstance(coeff, dict):
                 dS = linalg.norm(normalsS, axis=1)*coeff[color]
             else:
@@ -257,8 +257,8 @@ cells]
         A =  self.computeMatrixTransportCellWise(data, type='centered')
         return tools.checkmmatrix.diffusionForMMatrix(A)
     def computeMatrixTransportUpwindSides(self, data):
-        nnodes, nfaces, ncells, dim, dV = self.mesh.nnodes, self.mesh.nfaces, self.mesh.ncells, self.mesh.dimension, self.mesh.cell_volumes
-        normalsS, cof, simp = self.mesh.normals, self.mesh.topology.cells_of_faces, self.mesh.cells
+        nnodes, nfaces, ncells, dim, dV = self.mesh.nnodes, self.mesh.nfaces, self.mesh.ncells, self.mesh.dimension, self.mesh.geometry.cell_volumes
+        normalsS, cof, simp = self.mesh.geometry.normals, self.mesh.topology.cells_of_faces, self.mesh.cells
         dbS = linalg.norm(normalsS, axis=1)*data.betart/dim/(dim+1)
         innerfaces = self.mesh.topology.inner_faces
         infaces = np.arange(nfaces)[innerfaces]
@@ -336,17 +336,17 @@ cells]
         if type=='centered':
             beta, mus = data.betacell, np.full(dim+1,1.0/(dim+1))
             # print(f"{beta=} {data=}")
-            mat = np.einsum('n,njk,nk,i -> nij', self.mesh.cell_volumes, self.cellgrads[:,:,:dim], beta, mus)
+            mat = np.einsum('n,njk,nk,i -> nij', self.mesh.geometry.cell_volumes, self.cellgrads[:,:,:dim], beta, mus)
             A =  sparse.coo_matrix((mat.ravel(), (self.rows, self.cols)), shape=(nnodes, nnodes)).tocsr()
         elif type=='supg':
             beta, mus = data.betacell, data.md.mus
-            mat = np.einsum('n,njk,nk,ni -> nij', self.mesh.cell_volumes, self.cellgrads[:,:,:dim], beta, mus)
+            mat = np.einsum('n,njk,nk,ni -> nij', self.mesh.geometry.cell_volumes, self.cellgrads[:,:,:dim], beta, mus)
             A =  sparse.coo_matrix((mat.ravel(), (self.rows, self.cols)), shape=(nnodes, nnodes)).tocsr()
         else: raise ValueError(f"unknown type {type=}")
         A -= self.computeBdryMassMatrix(coeff=np.minimum(data.betart, 0), lumped=True)
         return A
     def computeMassMatrixSupg(self, xd, data, coeff=1):
-        dim, dV, nnodes, xK = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.nnodes, self.mesh.cell_centers
+        dim, dV, nnodes, xK = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.nnodes, self.mesh.geometry.cell_centers
         massloc = tools.barycentric.tensor(d=dim, k=2)
         mass = np.einsum('n,ij->nij', coeff*dV, massloc)
         massloc = tools.barycentric.tensor(d=dim, k=1)
@@ -357,25 +357,25 @@ cells]
     # dotmat
     def formDiffusion(self, du, u, coeff):
         graduh = np.einsum('nij,ni->nj', self.cellgrads, u[self.mesh.topology.cells])
-        graduh = np.einsum('ni,n->ni', graduh, self.mesh.cell_volumes*coeff)
+        graduh = np.einsum('ni,n->ni', graduh, self.mesh.geometry.cell_volumes*coeff)
         # du += np.einsum('nj,nij->ni', graduh, self.cellgrads)
         raise ValueError(f"graduh {graduh.shape} {du.shape}")
         return du
     def massDotCell(self, b, f, coeff=1):
         assert f.shape[0] == self.mesh.ncells
-        dimension, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.cell_volumes
+        dimension, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.geometry.cell_volumes
         massloc = 1/(dimension+1)
         np.add.at(b, simplices, (massloc*coeff*dV*f)[:, np.newaxis])
         return b
     def massDot(self, b, f, coeff=1):
-        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.cell_volumes
+        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.geometry.cell_volumes
         massloc = tools.barycentric.tensor(d=dim, k=2)
         r = np.einsum('n,kl,nl->nk', coeff * dV, massloc, f[simplices])
         np.add.at(b, simplices, r)
         return b
     def massDotSupg(self, b, f, data, coeff=1):
         if self.params_str['convmethod'][:4] != 'supg': return
-        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.cell_volumes
+        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.geometry.cell_volumes
         r = np.einsum('n,nk,n->nk', coeff*dV, data.md.mus-1/(dim+1), f[simplices].mean(axis=1))
         np.add.at(b, simplices, r)
         return b
@@ -383,7 +383,7 @@ cells]
         if colors is None: colors = self.mesh.labels.boundary.keys()
         for color in colors:
             faces = self.mesh.labels.boundary[color]
-            normalsS = self.mesh.normals[faces]
+            normalsS = self.mesh.geometry.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             nodes = self.mesh.topology.faces[faces]
             if isinstance(coeff, (int,float)): dS *= coeff
@@ -403,7 +403,7 @@ cells]
     # rhs
     def computeRhsMass(self, b, rhs, mass):
         if rhs is None: return b
-        x, y, z = self.mesh.points.T
+        x, y, z = self.mesh.geometry.points.T
         b += mass * rhs(x, y, z)
         return b
     def computeRhsCell(self, b, rhscell):
@@ -414,8 +414,8 @@ cells]
             for label, fct in rhscell.items():
                 if fct is None: continue
                 cells = self.mesh.labels.cell[label]
-                xc, yc, zc = self.mesh.cell_centers[cells].T
-                bC = scale * fct(xc, yc, zc) * self.mesh.cell_volumes[cells]
+                xc, yc, zc = self.mesh.geometry.cell_centers[cells].T
+                bC = scale * fct(xc, yc, zc) * self.mesh.geometry.cell_volumes[cells]
                 # print("bC", bC)
                 np.add.at(b, self.mesh.topology.cells[
 cells].T, bC)
@@ -428,12 +428,12 @@ cells].T, bC)
         for label, fct in rhspoint.items():
             if fct is None: continue
             points = self.mesh.labels.vertex[label]
-            xc, yc, zc = self.mesh.points[points].T
+            xc, yc, zc = self.mesh.geometry.points[points].T
             # print("xc, yc, zc, f", xc, yc, zc, fct(xc, yc, zc))
             b[points] += fct(xc, yc, zc)
         return b
     def computeRhsBoundary(self, b, bdryfct, colors):
-        normals =  self.mesh.normals
+        normals =  self.mesh.geometry.normals
         scale = 1 / self.mesh.dimension
         for color in colors:
             faces = self.mesh.labels.boundary[color]
@@ -442,13 +442,13 @@ cells].T, bC)
             dS = linalg.norm(normalsS,axis=1)
             normalsS = normalsS/dS[:,np.newaxis]
             assert(dS.shape[0] == len(faces))
-            xf, yf, zf = self.mesh.face_centers[faces].T
+            xf, yf, zf = self.mesh.geometry.face_centers[faces].T
             nx, ny, nz = normalsS.T
             bS = scale * bdryfct[color](xf, yf, zf, nx, ny, nz) * dS
             np.add.at(b, self.mesh.topology.faces[faces].T, bS)
         return b
     def computeRhsBoundaryMass(self, b, bdrycond, types, mass):
-        normals =  self.mesh.normals
+        normals =  self.mesh.geometry.normals
         help = np.zeros(self.mesh.nnodes)
         for color, faces in self.mesh.labels.boundary.items():
             if bdrycond.type[color] not in types: continue
@@ -459,7 +459,7 @@ cells].T, bC)
             nx, ny, nz = normalsS.T
             assert(dS.shape[0] == len(faces))
             nodes = np.unique(self.mesh.topology.faces[faces].reshape(-1))
-            x, y, z = self.mesh.points[nodes].T
+            x, y, z = self.mesh.geometry.points[nodes].T
             # constant normal !!
             nx, ny, nz = np.mean(normalsS, axis=0)
             help[nodes] = bdrycond.fct[color](x, y, z, nx, ny, nz)
@@ -468,36 +468,36 @@ cells].T, bC)
         return b
     # postprocess
     def computeErrorL2Cell(self, solexact, uh):
-        xc, yc, zc = self.mesh.cell_centers.T
+        xc, yc, zc = self.mesh.geometry.cell_centers.T
         ec = solexact(xc, yc, zc) - np.mean(uh[self.mesh.topology.cells], axis=1)
-        return np.sqrt(np.sum(ec**2* self.mesh.cell_volumes)), ec
+        return np.sqrt(np.sum(ec**2* self.mesh.geometry.cell_volumes)), ec
     def computeErrorL2(self, solexact, uh):
-        x, y, z = self.mesh.points.T
+        x, y, z = self.mesh.geometry.points.T
         en = solexact(x, y, z) - uh
         Men = np.zeros_like(en)
         return np.sqrt( np.dot(en, self.massDot(Men,en)) ), en
     def computeErrorFluxL2(self, solexact, uh, diffcell=None):
-        xc, yc, zc = self.mesh.cell_centers.T
+        xc, yc, zc = self.mesh.geometry.cell_centers.T
         graduh = np.einsum('nij,ni->nj', self.cellgrads, uh[self.mesh.topology.cells])
         errv = 0
         for i in range(self.mesh.dimension):
             solxi = solexact.d(i, xc, yc, zc)
-            if diffcell is None: errv += np.sum((solxi - graduh[:, i]) ** 2 * self.mesh.cell_volumes)
-            else: errv += np.sum( diffcell*(solxi-graduh[:,i])**2* self.mesh.cell_volumes)
+            if diffcell is None: errv += np.sum((solxi - graduh[:, i]) ** 2 * self.mesh.geometry.cell_volumes)
+            else: errv += np.sum( diffcell*(solxi-graduh[:,i])**2* self.mesh.geometry.cell_volumes)
         return np.sqrt(errv)
     def computeBdryMean(self, u, colors):
         mean, omega = np.zeros(len(colors)), np.zeros(len(colors))
         for i,color in enumerate(colors):
             faces = self.mesh.labels.boundary[color]
-            normalsS = self.mesh.normals[faces]
+            normalsS = self.mesh.geometry.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             omega[i] = np.sum(dS)
             mean[i] = np.sum(dS*np.mean(u[self.mesh.topology.faces[faces]],axis=1))
         return mean/omega
     def comuteFluxOnRobin(self, u, faces, dS, uR, cR):
         uhmean =  np.sum(dS * np.mean(u[self.mesh.topology.faces[faces]], axis=1))
-        xf, yf, zf = self.mesh.face_centers[faces].T
-        nx, ny, nz = np.mean(self.mesh.normals[faces], axis=0)
+        xf, yf, zf = self.mesh.geometry.face_centers[faces].T
+        nx, ny, nz = np.mean(self.mesh.geometry.normals[faces], axis=0)
         if uR:
             try:
                 uRmean =  np.sum(dS * uR(xf, yf, zf, nx, ny, nz))
@@ -509,7 +509,7 @@ cells].T, bC)
         flux, omega = np.zeros(len(colors)), np.zeros(len(colors))
         for i,color in enumerate(colors):
             faces = self.mesh.labels.boundary[color]
-            normalsS = self.mesh.normals[faces]
+            normalsS = self.mesh.geometry.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             omega[i] = np.sum(dS)
             if color in bdrydata.bsaved.keys():
@@ -523,12 +523,12 @@ cells].T, bC)
         for color in colors:
             faces = self.mesh.labels.boundary[color]
             nodes = np.unique(np.union1d(nodes, self.mesh.topology.faces[faces].ravel()))
-        return self.mesh.points[nodes], u[nodes]
+        return self.mesh.geometry.points[nodes], u[nodes]
     def computePointValues(self, u, colors):
         up = np.empty(len(colors))
         for i,color in enumerate(colors):
             nodes = self.mesh.labels.vertex[color]
-            # print(f"{nodes=} {self.mesh.points[nodes]=}")
+            # print(f"{nodes=} {self.mesh.geometry.points[nodes]=}")
             up[i] = u[nodes]
         return up
     def computeLineValues(self, u, colors):
@@ -538,20 +538,20 @@ cells].T, bC)
             lines = self.mesh.labels.line[color]
             nodes = np.unique(lines)
             print(f"{u[nodes]=}")
-            print(f"{self.mesh.points[nodes,0]=}")
-            print(f"{self.mesh.points[nodes,1]=}")
+            print(f"{self.mesh.geometry.points[nodes,0]=}")
+            print(f"{self.mesh.geometry.points[nodes,1]=}")
             import matplotlib.pyplot as plt
-            plt.plot(self.mesh.points[nodes,0], u[nodes])
+            plt.plot(self.mesh.geometry.points[nodes,0], u[nodes])
             plt.show()
             # print(f"{np.unique(lines)=}")
-            # print(f"{self.mesh.points[lines]=}")
+            # print(f"{self.mesh.geometry.points[lines]=}")
         return up
     def computeMeanValues(self, u, colors):
         up = np.empty(len(colors))
         for i, color in enumerate(colors):
             cells = self.mesh.labels.cell[color]
             up[i] = np.sum(np.mean(u[self.mesh.topology.cells[
-cells]],axis=1)*self.mesh.cell_volumes[cells])
+cells]],axis=1)*self.mesh.geometry.cell_volumes[cells])
         return up
 
     def computeEstimatorJumpP1(self, uh, rhs_cell, diffcell=None):
@@ -574,17 +574,17 @@ cells]],axis=1)*self.mesh.cell_volumes[cells])
         flux = diffcell[:, None] * graduh
 
         # volume part: h_K^2 ||f||_K^2
-        hK = mesh.cell_volumes ** (1.0 / dim)
-        eta2 = hK ** 2 * rhs_cell ** 2 * mesh.cell_volumes
+        hK = mesh.geometry.cell_volumes ** (1.0 / dim)
+        eta2 = hK ** 2 * rhs_cell ** 2 * mesh.geometry.cell_volumes
 
         if not hasattr(mesh, "innerfaces"):
-            mesh.constructInnerFaces()
+            mesh.construct_inner_faces()
 
         faces = mesh.topology.inner_faces
         ci = mesh.topology.cells_of_inner_faces
         c0, c1 = ci[:, 0], ci[:, 1]
 
-        normalsS = mesh.normals[faces, :dim]
+        normalsS = mesh.geometry.normals[faces, :dim]
         dS = np.linalg.norm(normalsS, axis=1)
         nS = normalsS / dS[:, None]
 

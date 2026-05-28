@@ -27,13 +27,13 @@ class RT0():
     def interpolate(self, f):
         dim = self.mesh.dimension
 
-        normals = self.mesh.normals[:, :dim]
+        normals = self.mesh.geometry.normals[:, :dim]
         nnormals = normals / linalg.norm(normals, axis=1)[:, None]
 
         if len(f) != dim:
             raise TypeError(f"f needs {dim} components")
 
-        coords = self.mesh.face_centers[:, :dim].T
+        coords = self.mesh.geometry.face_centers[:, :dim].T
         nfaces = self.mesh.nfaces
 
         fa = np.vstack([
@@ -45,15 +45,15 @@ class RT0():
     def interpolateFromFem(self, v, fem, stack_storage):
         assert isinstance(fem, fems.cr1.CR1)
         dim = self.mesh.dimension
-        nfaces, normals = self.mesh.nfaces, self.mesh.normals[:,:dim]
+        nfaces, normals = self.mesh.nfaces, self.mesh.geometry.normals[:,:dim]
         assert v.shape[0] == dim*nfaces
         nnormals = normals/linalg.norm(normals, axis=1)[:,np.newaxis]
         if stack_storage:
             return np.einsum('ni, in -> n', nnormals, v.reshape(dim, nfaces))
         return np.einsum('ni, ni -> n', nnormals, v.reshape(nfaces,dim))
     def toCellMatrix(self):
-        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
-        dim, dV, p, pc = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.geometry.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
+        dim, dV, p, pc = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.geometry.points, self.mesh.geometry.cell_centers
         simp = self.mesh.topology.cells
         dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)/dim
         mat = np.einsum('ni, nij, n->jni', dS, pc[:,np.newaxis,:dim]-p[simp,:dim], 1/dV)
@@ -61,16 +61,16 @@ class RT0():
         cols = np.tile(faces_of_cells.ravel(), dim)
         return  sparse.coo_matrix((mat.ravel(), (rows.ravel(), cols.ravel())), shape=(dim*ncells, nfaces))
     def toCell(self, v):
-        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
-        dim, dV, p, pc = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.geometry.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
+        dim, dV, p, pc = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.geometry.points, self.mesh.geometry.cell_centers
         simp = self.mesh.topology.cells
         dS2 = linalg.norm(normals, axis=1)
         sigma2 = sigma/dV[:,np.newaxis]/dim
         return np.einsum('ni,ni,nij,ni -> nj', v[faces_of_cells], sigma2, pc[:,np.newaxis,:dim]-p[simp,:dim], dS2[faces_of_cells])
     def constructMass(self, massproj = 'standard', diffinvcell=None):
-        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
-        dim, dV, nloc, simp = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.dimension+1, self.mesh.cells
-        p, pc, pf = self.mesh.points, self.mesh.cell_centers, self.mesh.face_centers
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.geometry.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
+        dim, dV, nloc, simp = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.dimension+1, self.mesh.cells
+        p, pc, pf = self.mesh.geometry.points, self.mesh.geometry.cell_centers, self.mesh.geometry.face_centers
         # massproj = self.params_str['massproj']
         if massproj == 'standard':
             # RT
@@ -257,7 +257,7 @@ class RT0():
         else:
             raise ValueError(f"unknown type {massproj=}")
     def constructDiv(self):
-        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
+        ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.geometry.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
         nloc = self.mesh.dimension+1
         rows = np.repeat(np.arange(ncells), nloc)
         cols = faces_of_cells.ravel()
@@ -271,21 +271,21 @@ class RT0():
         counts = np.bincount(simp.reshape(-1).astype(int))
         # print(f"{counts=}")
         pn2 = np.zeros(nnodes)
-        xdiff = self.mesh.points[simp, :dim] - self.mesh.cell_centers[:, np.newaxis,:dim]
+        xdiff = self.mesh.geometry.points[simp, :dim] - self.mesh.geometry.cell_centers[:, np.newaxis,:dim]
         # rows = np.repeat(simp,dim)
         # cols = np.repeat(dim*np.arange(ncells),dim*(dim+1)).reshape(ncells * (dim+1), dim) + np.arange(dim)
         # mat = np.einsum("nij, n -> nij", xdiff, diffinv)
         # A = sparse.coo_matrix((mat.reshape(-1), (rows.reshape(-1), cols.reshape(-1))), shape=(nnodes, dim*ncells)).tocsr()
         np.add.at(pn2, simp, p[:,np.newaxis])
         assert vc.shape[1]==dim and vc.shape[0]==ncells
-        # raise ValueError(f"{nnodes=} {ncells=} {self.mesh.points.shape=} {xdiff.shape=}")
+        # raise ValueError(f"{nnodes=} {ncells=} {self.mesh.geometry.points.shape=} {xdiff.shape=}")
         # pn2 += A*vc
         np.add.at(pn2, simp, np.einsum("nij, n, nj -> ni", xdiff, diffinv, vc))
         # pn2 += np.einsum("nij, n, nj -> ni", xdiff, diffinv, vc)
         pn2 /= counts
         return pn2
     # def rhsDirichlet(self, faces, ud):
-    #     return linalg.norm(self.mesh.normals[faces],axis=1) * ud
+    #     return linalg.norm(self.mesh.geometry.normals[faces],axis=1) * ud
     def computeBdryMassMatrix(self, colors, param):
         nfaces = self.mesh.nfaces
         rows = np.empty(shape=(0), dtype=int)
@@ -293,7 +293,7 @@ class RT0():
         mat = np.empty(shape=(0), dtype=float)
         for color in colors:
             faces = self.mesh.labels.boundary[color]
-            normalsS = self.mesh.normals[faces]
+            normalsS = self.mesh.geometry.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
             cols = np.append(cols, faces)
             rows = np.append(rows, faces)

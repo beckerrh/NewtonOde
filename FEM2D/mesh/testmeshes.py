@@ -59,7 +59,7 @@ def unitline(h=0.5, a=0.0, b=1.0, use_pygmsh=False):
         def __init__(self, a=0, b=1, h=0.1):
             N = int((b - a) / h + 1)
 
-            self.points = np.stack(
+            self.geometry.points = np.stack(
                 [
                     np.linspace(a, b, N),
                     np.zeros(N),

@@ -7,11 +7,11 @@ import matplotlib.patches as mpatches
 # ================================================================ #
 def _mesh_arrays(mesh):
     tris = mesh.topology.cells
-    pointsc = getattr(mesh, "cell_centers", getattr(mesh, "pointsc", None))
-    pointsf = getattr(mesh, "face_centers", getattr(mesh, "pointsf", None))
+    pointsc = mesh.geometry.cell_centers
+    pointsf = mesh.geometry.face_centers
     return (
-        mesh.points[:, 0],
-        mesh.points[:, 1],
+        mesh.geometry.points[:, 0],
+        mesh.geometry.points[:, 1],
         tris,
         pointsc,
         pointsf,

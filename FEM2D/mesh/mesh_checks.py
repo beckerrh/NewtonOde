@@ -23,10 +23,9 @@ def check_faces_of_cells_local_order(mesh):
                     f"got {got}, expected {expected[iloc]}"
                 )
 def check_boundary_normals(mesh, tol=1e-12):
-    p = mesh.points[:, :mesh.dimension]
-    pc = mesh.pointsc[:, :mesh.dimension]
-    pf = mesh.pointsf[:, :mesh.dimension]
-    normals = mesh.normals[:, :mesh.dimension]
+    pc = mesh.geometry.cell_centers[:, :mesh.dimension]
+    pf = mesh.geometry.face_centers[:, :mesh.dimension]
+    normals = mesh.geometry.normals[:, :mesh.dimension]
 
     bad = []
 
@@ -74,13 +73,13 @@ def check_mesh(mesh):
     check_no_degenerate_cells(mesh.topology.cells)
     check_no_nonmanifold_edges(mesh.topology.cells)
     check_faces_of_cells_local_order(mesh)
-    print("nnodes", mesh.nnodes, mesh.points.shape[0])
+    print("nnodes", mesh.nnodes, mesh.geometry.points.shape[0])
     print("ncells", mesh.ncells, mesh.cells.shape[0])
     print("nfaces", mesh.nfaces, mesh.topology.faces.shape[0])
     print("simp max", mesh.cells.max())
     print("faces max", mesh.topology.faces.max())
-    print("dV min/max", mesh.cell_volumes.min(), mesh.cell_volumes.max())
-    print("bad dV", np.sum(mesh.cell_volumes <= 0))
+    print("dV min/max", mesh.geometry.cell_volumes.min(), mesh.geometry.cell_volumes.max())
+    print("bad dV", np.sum(mesh.geometry.cell_volumes <= 0))
     print("cell labels", {k: len(v) for k, v in mesh.labels.cell.items()})
     print("bdry labels", {k: len(v) for k, v in mesh.labels.boundary.items()})
 

@@ -28,7 +28,7 @@ def from_meshio(mesh):
     if not np.all(used == np.arange(len(used))):
         msg = (
             f"Dangling or non-contiguous points are not supported yet.\n"
-            f"{len(used)=}, {mesh.points.shape=}, {used=}"
+            f"{len(used)=}, {mesh.geometry.points.shape=}, {used=}"
         )
         raise ValueError(msg)
 
@@ -78,7 +78,7 @@ def write(mesh, filename, dirname=None, data=None):
         raise ValueError(f"Unsupported dimension {mesh.dimension}")
 
     args = {
-        "points": mesh.points,
+        "points": mesh.geometry.points,
         "cells": {cell_name: mesh.cells},
     }
 

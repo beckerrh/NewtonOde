@@ -134,7 +134,7 @@ def _longest_edge_refedges(mesh):
         a, b, c = map(int, tri)
         edges = [(a, b), (b, c), (c, a)]
         lengths = [
-            np.linalg.norm(mesh.points[i] - mesh.points[j])
+            np.linalg.norm(mesh.geometry.points[i] - mesh.geometry.points[j])
             for i, j in edges
         ]
         e = edges[int(np.argmax(lengths))]
@@ -249,7 +249,7 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
     faces = mesh.topology.faces
     fmap = mesh.edge2face
     cells = mesh.topology.cells
-    points = mesh.points
+    points = mesh.geometry.points
 
     # ------------------------------------------------------------------ #
     # Closure propagation
@@ -430,7 +430,7 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
 
     info = RefinementInfo(
         old_npoints=old_npoints,
-        new_npoints=mesh2.points.shape[0],
+        new_npoints=mesh2.geometry.points.shape[0],
         old_ncells=old_ncells,
         new_ncells=mesh2.topology.cells.shape[0],
         midpoint_parents=midpoint_parents,
@@ -452,15 +452,15 @@ if __name__ == "__main__":
     def run(mesh):
         for k in range(12):
 
-            xc = mesh.cell_centers[:, 0]
-            yc = mesh.cell_centers[:, 1]
+            xc = mesh.geometry.cell_centers[:, 0]
+            yc = mesh.geometry.cell_centers[:, 1]
 
             marked = xc**2 + yc**2 < 0.35**2
 
             mesh, info = refine_nvb(mesh, marked)
             print(
                 f"iter={k:2d} "
-                f"npoints={mesh.points.shape[0]:6d} "
+                f"npoints={mesh.geometry.points.shape[0]:6d} "
                 f"ncells={mesh.topology.cells.shape[0]:6d}"
             )
 

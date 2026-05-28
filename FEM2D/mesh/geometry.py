@@ -2,17 +2,17 @@ import numpy as np
 
 
 def construct_centers(mesh):
-    mesh.cell_centers = mesh.points[mesh.topology.cells].mean(axis=1)
-    mesh.face_centers = mesh.points[mesh.topology.faces].mean(axis=1)
+    mesh.geometry.cell_centers = mesh.geometry.points[mesh.topology.cells].mean(axis=1)
+    mesh.geometry.face_centers = mesh.geometry.points[mesh.topology.faces].mean(axis=1)
 
 
 def construct_normals_and_volumes(mesh):
     elem = mesh.topology.cells
-    points = mesh.points
+    points = mesh.geometry.points
 
     if mesh.dimension == 1:
         x = points[:, 0]
-        mesh.normals = np.stack(
+        mesh.geometry.normals = np.stack(
             (
                 np.ones(mesh.topology.faces.shape[0]),
                 np.zeros(mesh.topology.faces.shape[0]),
@@ -21,21 +21,21 @@ def construct_normals_and_volumes(mesh):
             axis=-1,
         )
         dx1 = x[elem[:, 1]] - x[elem[:, 0]]
-        mesh.self.mesh.cell_volumes = np.abs(dx1)
+        mesh.self.mesh.geometry.cell_volumes = np.abs(dx1)
 
     elif mesh.dimension == 2:
         x, y = points[:, 0], points[:, 1]
 
         sidesx = x[mesh.topology.faces[:, 1]] - x[mesh.topology.faces[:, 0]]
         sidesy = y[mesh.topology.faces[:, 1]] - y[mesh.topology.faces[:, 0]]
-        mesh.normals = np.stack((-sidesy, sidesx, np.zeros(mesh.topology.faces.shape[0])), axis=-1)
+        mesh.geometry.normals = np.stack((-sidesy, sidesx, np.zeros(mesh.topology.faces.shape[0])), axis=-1)
 
         dx1 = x[elem[:, 1]] - x[elem[:, 0]]
         dx2 = x[elem[:, 2]] - x[elem[:, 0]]
         dy1 = y[elem[:, 1]] - y[elem[:, 0]]
         dy2 = y[elem[:, 2]] - y[elem[:, 0]]
 
-        mesh.cell_volumes = 0.5 * np.abs(dx1 * dy2 - dx2 * dy1)
+        mesh.geometry.cell_volumes = 0.5 * np.abs(dx1 * dy2 - dx2 * dy1)
 
     elif mesh.dimension == 3:
         x, y, z = points[:, 0], points[:, 1], points[:, 2]
@@ -52,7 +52,7 @@ def construct_normals_and_volumes(mesh):
         sidesy = x2 * z1 - x1 * z2
         sidesz = x1 * y2 - x2 * y1
 
-        mesh.normals = 0.5 * np.stack((sidesx, sidesy, sidesz), axis=-1)
+        mesh.geometry.normals = 0.5 * np.stack((sidesx, sidesy, sidesz), axis=-1)
 
         dx1 = x[elem[:, 1]] - x[elem[:, 0]]
         dx2 = x[elem[:, 2]] - x[elem[:, 0]]
@@ -66,7 +66,7 @@ def construct_normals_and_volumes(mesh):
         dz2 = z[elem[:, 2]] - z[elem[:, 0]]
         dz3 = z[elem[:, 3]] - z[elem[:, 0]]
 
-        mesh.self.mesh.cell_volumes = (1.0 / 6.0) * np.abs(
+        mesh.self.mesh.geometry.cell_volumes = (1.0 / 6.0) * np.abs(
             dx1 * (dy2 * dz3 - dy3 * dz2)
             - dx2 * (dy1 * dz3 - dy3 * dz1)
             + dx3 * (dy1 * dz2 - dy2 * dz1)
@@ -93,17 +93,17 @@ def orient_normals(mesh):
     # Boundary normals: exterior orientation.
     ib = np.arange(mesh.topology.faces.shape[0])[mesh.topology.cells_of_faces[:, 1] == -1]
     xt = (
-        np.mean(mesh.points[mesh.topology.faces[ib]], axis=1)
-        - np.mean(mesh.points[mesh.topology.cells[mesh.topology.cells_of_faces[ib, 0]]], axis=1)
+        np.mean(mesh.geometry.points[mesh.topology.faces[ib]], axis=1)
+        - np.mean(mesh.geometry.points[mesh.topology.cells[mesh.topology.cells_of_faces[ib, 0]]], axis=1)
     )
-    m = np.einsum("nk,nk->n", mesh.normals[ib], xt) < 0
-    mesh.normals[ib[m]] *= -1
+    m = np.einsum("nk,nk->n", mesh.geometry.normals[ib], xt) < 0
+    mesh.geometry.normals[ib[m]] *= -1
 
     # Interior normals: from cell 0 to cell 1.
     ii = np.arange(mesh.topology.faces.shape[0])[mesh.topology.cells_of_faces[:, 1] != -1]
     xt = (
-        np.mean(mesh.points[mesh.topology.cells[mesh.topology.cells_of_faces[ii, 1]]], axis=1)
-        - np.mean(mesh.points[mesh.topology.cells[mesh.topology.cells_of_faces[ii, 0]]], axis=1)
+        np.mean(mesh.geometry.points[mesh.topology.cells[mesh.topology.cells_of_faces[ii, 1]]], axis=1)
+        - np.mean(mesh.geometry.points[mesh.topology.cells[mesh.topology.cells_of_faces[ii, 0]]], axis=1)
     )
-    m = np.einsum("nk,nk->n", mesh.normals[ii], xt) < 0
-    mesh.normals[ii[m]] *= -1
+    m = np.einsum("nk,nk->n", mesh.geometry.normals[ii], xt) < 0
+    mesh.geometry.normals[ii[m]] *= -1

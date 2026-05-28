@@ -71,7 +71,7 @@ class Application:
         if gs is None:
             gs = fig.add_gridspec(1, 1)[0,0]
         inner = gridspec.GridSpecFromSubplotSpec(nrows=nplots, ncols=1, subplot_spec=gs, wspace=0.3, hspace=0.3)
-        x, y, tris = mesh.points[:,0], mesh.points[:,1], mesh.cells
+        x, y, tris = mesh.geometry.points[:,0], mesh.geometry.points[:,1], mesh.cells
         iplot = 0
         for name,values in data['cell'].items():
             ax = fig.add_subplot(inner[iplot])

@@ -78,7 +78,7 @@ class EllipticDiscretization:
             fct = np.vectorize(params.fct_glob[name])
             arr = np.empty(self.mesh.ncells)
             for color, cells in self.mesh.labels.cell.items():
-                xc, yc, zc = self.mesh.cell_centers[cells].T
+                xc, yc, zc = self.mesh.geometry.cell_centers[cells].T
                 arr[cells] = fct(color, xc, yc, zc)
         elif name in params.scal_glob:
             arr = np.full(self.mesh.ncells, params.scal_glob[name])
@@ -223,7 +223,7 @@ class EllipticDiscretization:
                     raise ValueError(f"unknown postprocess type '{type}' for key '{name}'\nknown types={types=}")
         if hasattr(self.fem, "computeEstimatorJumpP1"):
             if "rhs" in self.problemdata.params.fct_glob:
-                xc, yc, zc = self.mesh.cell_centers.T
+                xc, yc, zc = self.mesh.geometry.cell_centers.T
                 rhs_cell = self.problemdata.params.fct_glob["rhs"](xc, yc, zc)
             else:
                 rhs_cell = np.zeros(self.mesh.ncells)  # for first jump-only test
