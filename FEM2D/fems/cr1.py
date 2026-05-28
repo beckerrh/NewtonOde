@@ -365,8 +365,10 @@ class CR1(p1general.P1general):
         normalsS = self.mesh.normals[innerfaces]
         dS = linalg.norm(normalsS, axis=1)
         faces = self.mesh.faces[self.mesh.innerfaces]
-        # ind0 = npext.positionin(faces, self.mesh.cells[ci0])
-        # ind1 = npext.positionin(faces, self.mesh.cells[ci1])
+        # ind0 = npext.positionin(faces, self.mesh.topology.cells[
+ci0])
+        # ind1 = npext.positionin(faces, self.mesh.topology.cells[
+ci1])
         # fi0 = np.take_along_axis(self.mesh.faces_of_cells[ci0], ind0, axis=1)
         # fi1 = np.take_along_axis(self.mesh.faces_of_cells[ci1], ind1, axis=1)
         fi0, fi1 = self.mesh.faces_of_cellsNotOnInnerFaces(ci0, ci1)
@@ -408,8 +410,10 @@ class CR1(p1general.P1general):
         normalsS = self.mesh.normals[innerfaces]
         dS = linalg.norm(normalsS, axis=1)
         faces = self.mesh.faces[self.mesh.innerfaces]
-        # ind0 = npext.positionin(faces, self.mesh.cells[ci0])
-        # ind1 = npext.positionin(faces, self.mesh.cells[ci1])
+        # ind0 = npext.positionin(faces, self.mesh.topology.cells[
+ci0])
+        # ind1 = npext.positionin(faces, self.mesh.topology.cells[
+ci1])
         # fi0 = np.take_along_axis(self.mesh.faces_of_cells[ci0], ind0, axis=1)
         # fi1 = np.take_along_axis(self.mesh.faces_of_cells[ci1], ind1, axis=1)
         fi0, fi1 = self.mesh.faces_of_cellsNotOnInnerFaces(ci0, ci1)

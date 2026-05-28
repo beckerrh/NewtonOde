@@ -2,12 +2,12 @@ import numpy as np
 
 
 def construct_centers(mesh):
-    mesh.cell_centers = mesh.points[mesh.cells].mean(axis=1)
+    mesh.cell_centers = mesh.points[mesh.topology.cells].mean(axis=1)
     mesh.face_centers = mesh.points[mesh.faces].mean(axis=1)
 
 
 def construct_normals_and_volumes(mesh):
-    elem = mesh.cells
+    elem = mesh.topology.cells
     points = mesh.points
 
     if mesh.dimension == 1:
@@ -79,7 +79,7 @@ def construct_normals_and_volumes(mesh):
 
 
 def orient_normals(mesh):
-    ind = np.arange(mesh.cells.shape[0])
+    ind = np.arange(mesh.topology.cells.shape[0])
 
     mesh.sigma = (
         2
@@ -94,7 +94,7 @@ def orient_normals(mesh):
     ib = np.arange(mesh.faces.shape[0])[mesh.cells_of_faces[:, 1] == -1]
     xt = (
         np.mean(mesh.points[mesh.faces[ib]], axis=1)
-        - np.mean(mesh.points[mesh.cells[mesh.cells_of_faces[ib, 0]]], axis=1)
+        - np.mean(mesh.points[mesh.topology.cells[mesh.cells_of_faces[ib, 0]]], axis=1)
     )
     m = np.einsum("nk,nk->n", mesh.normals[ib], xt) < 0
     mesh.normals[ib[m]] *= -1
@@ -102,8 +102,8 @@ def orient_normals(mesh):
     # Interior normals: from cell 0 to cell 1.
     ii = np.arange(mesh.faces.shape[0])[mesh.cells_of_faces[:, 1] != -1]
     xt = (
-        np.mean(mesh.points[mesh.cells[mesh.cells_of_faces[ii, 1]]], axis=1)
-        - np.mean(mesh.points[mesh.cells[mesh.cells_of_faces[ii, 0]]], axis=1)
+        np.mean(mesh.points[mesh.topology.cells[mesh.cells_of_faces[ii, 1]]], axis=1)
+        - np.mean(mesh.points[mesh.topology.cells[mesh.cells_of_faces[ii, 0]]], axis=1)
     )
     m = np.einsum("nk,nk->n", mesh.normals[ii], xt) < 0
     mesh.normals[ii[m]] *= -1

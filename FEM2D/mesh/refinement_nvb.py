@@ -13,11 +13,10 @@ This avoids fragile incremental updates of faces_of_cells/cells_of_faces.
 import numpy as np
 from contextlib import nullcontext
 
-from FEM2D.mesh.mesh_edges import compute_edges, face_dict, sorted_edge
+from FEM2D.mesh.mesh_edges import sorted_edge
 from FEM2D.mesh.mesh_checks import check_no_degenerate_cells, check_no_nonmanifold_edges, check_boundary_normals
 
 from collections import defaultdict, deque
-from dataclasses import dataclass
 
 from FEM2D.mesh.refinement_info import RefinementInfo
 from FEM2D.mesh.simplex_mesh import SimplexMesh
@@ -39,15 +38,20 @@ def _refine_cell_nvb_iterative(tri, refedge, marked_edges, points, new_points, e
     out_cells = []
     out_refs = []
 
-    stack = [(list(map(int, tri)), sorted_edge(refedge[0], refedge[1]))]
+    # stack = [(list(map(int, tri)), sorted_edge(refedge[0], refedge[1]))]
+    a, b = int(refedge[0]), int(refedge[1])
+    stack = [(list(map(int, tri)), (a, b) if a < b else (b, a))]
 
     while stack:
         tri, refedge = stack.pop()
 
         v0, v1, v2 = tri
-        e01 = sorted_edge(v0, v1)
-        e12 = sorted_edge(v1, v2)
-        e20 = sorted_edge(v2, v0)
+        # e01 = sorted_edge(v0, v1)
+        # e12 = sorted_edge(v1, v2)
+        # e20 = sorted_edge(v2, v0)
+        e01 = (v0, v1) if v0 < v1 else (v1, v0)
+        e12 = (v1, v2) if v1 < v2 else (v2, v1)
+        e20 = (v2, v0) if v2 < v0 else (v0, v2)
 
         if e01 not in marked_edges and e12 not in marked_edges and e20 not in marked_edges:
             out_cells.append(tri)
@@ -62,8 +66,10 @@ def _refine_cell_nvb_iterative(tri, refedge, marked_edges, points, new_points, e
         child0 = [c, a, m]
         child1 = [b, c, m]
 
-        ref0 = sorted_edge(c, a)
-        ref1 = sorted_edge(b, c)
+        # ref0 = sorted_edge(c, a)
+        # ref1 = sorted_edge(b, c)
+        ref0 = (c, a) if c < a else (a, c)
+        ref1 = (b, c) if b < c else (c, b)
 
         stack.append((child1, ref1))
         stack.append((child0, ref0))
@@ -104,7 +110,7 @@ def _refine_cell_recursive_nvb(tri, refedge, marked_edges, points, new_points, e
 
 
 def check_refedges(mesh, where=""):
-    for icell, tri in enumerate(mesh.cells):
+    for icell, tri in enumerate(mesh.topology.cells):
         tri = list(map(int, tri))
         e = tuple(map(int, mesh.refedges[icell]))
 
@@ -120,11 +126,11 @@ def check_refedges(mesh, where=""):
             print("  tri   =", tri)
             print("  ref   =", e)
             print("  cell_edges =", cell_edges)
-            raise RuntimeError("mesh.refedges is not aligned with mesh.cells")
+            raise RuntimeError("mesh.refedges is not aligned with mesh.topology.cells")
 
 def _longest_edge_refedges(mesh):
     refedges = []
-    for tri in mesh.cells:
+    for tri in mesh.topology.cells:
         a, b, c = map(int, tri)
         edges = [(a, b), (b, c), (c, a)]
         lengths = [
@@ -164,7 +170,8 @@ def _third_vertex(tri, a, b):
     raise RuntimeError("degenerate triangle")
 
 def _edge_midpoint(edge, points, edge_to_mid, new_points):
-    e = sorted_edge(edge[0], edge[1])
+    a, b = edge
+    e = (a, b) if a < b else (b, a)
     return edge_to_mid[e]
 
 # ====================================================================== #
@@ -179,12 +186,16 @@ def _split_boundary_labels(mesh, edge_to_mid):
 
         for f in faces:
             a, b = mesh.faces[f]
-            e = sorted_edge(a, b)
+            # e = sorted_edge(a, b)
+            # a, b = int(a), int(b)
+            e = (a, b) if a < b else (b, a)
 
             if e in edge_to_mid:
                 m = edge_to_mid[e]
-                new_faces.append(sorted_edge(a, m))
-                new_faces.append(sorted_edge(m, b))
+                # new_faces.append(sorted_edge(a, m))
+                # new_faces.append(sorted_edge(m, b))
+                new_faces.append((a, m) if a < m else (m, a))
+                new_faces.append((m, b) if m < b else (b, m))
             else:
                 new_faces.append(e)
 
@@ -201,7 +212,8 @@ def _apply_boundary_labels(mesh, boundary_edge_labels):
         mesh.labels.boundary = {}
         return
 
-    face_to_id = face_dict(mesh.faces)
+    face_to_id = mesh.edge2face
+    # face_to_id = face_dict(mesh.faces)
     bdrylabels = {}
 
     for label, edges in boundary_edge_labels.items():
@@ -221,39 +233,22 @@ def _apply_boundary_labels(mesh, boundary_edge_labels):
 # ====================================================================== #
 def refine_nvb(mesh, marked, debug=False, timer=None):
     """
-    Refine marked triangles using newest-vertex bisection closure.
-
-    Parameters
-    ----------
-    mesh:
-        SimplexMesh
-
-    marked:
-        boolean array of length ncells
-
-    method:
-        accepted for backward compatibility; currently ignored
-
-    debug:
-        if True, run consistency checks
+    Variant of refine_nvb with preallocated global cell/refedge/label arrays.
+    Intended for timing comparison against refine_nvb.
     """
     marked = np.asarray(marked, dtype=bool)
 
     if marked.ndim != 1:
         raise ValueError("marked must be a 1D boolean array")
 
-    ncells = mesh.cells.shape[0]
+    ncells = mesh.topology.cells.shape[0]
 
     if marked.shape[0] != ncells:
         raise ValueError("wrong size for marked")
 
-    # ------------------------------------------------------------------ #
-    # Edge data
-    # ------------------------------------------------------------------ #
-    faces_of_cells = mesh.faces_of_cells
     faces = mesh.faces
-    fmap = face_dict(mesh.faces)
-    cells = mesh.cells
+    fmap = mesh.edge2face
+    cells = mesh.topology.cells
     points = mesh.points
 
     # ------------------------------------------------------------------ #
@@ -263,27 +258,25 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
         refine_edge = np.zeros(mesh.faces.shape[0], dtype=bool)
 
         refedges = _ensure_refedges(mesh)
+
         if debug:
             check_refedges(mesh, "entry")
 
-        # Face index of the reference edge of each cell.
         cell_ref_faces = np.empty(ncells, dtype=int)
-        for icell in range(ncells):
-            a, b = refedges[icell]
-            cell_ref_faces[icell] = fmap[sorted_edge(a, b)]
 
+        for icell in range(ncells):
+            a, b = map(int, refedges[icell])
+            edge = (a, b) if a < b else (b, a)
+            cell_ref_faces[icell] = fmap[edge]
 
         queue = deque()
 
-        # Initial marking: marked cells force refinement of their reference edge.
         for icell in np.flatnonzero(marked):
             iref = cell_ref_faces[icell]
             if not refine_edge[iref]:
                 refine_edge[iref] = True
                 queue.append(iref)
 
-        # Closure propagation:
-        # If a cell has one refined edge, then its own reference edge must be refined.
         while queue:
             iface = queue.popleft()
 
@@ -295,9 +288,11 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
                 if not refine_edge[iref]:
                     refine_edge[iref] = True
                     queue.append(iref)
+
+    # ------------------------------------------------------------------ #
+    # New midpoint vertices
     # ------------------------------------------------------------------ #
     with _timed(timer, "new_points"):
-
         edge_to_mid = {}
 
         refined_faces = np.flatnonzero(refine_edge)
@@ -308,42 +303,55 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
         new_points[:n_old] = points
 
         for j, iface in enumerate(refined_faces):
-            a, b = faces[iface]
+            a, b = map(int, faces[iface])
+            edge = (a, b) if a < b else (b, a)
+
             imid = n_old + j
-            edge = sorted_edge(a, b)
             edge_to_mid[edge] = imid
             new_points[imid] = 0.5 * (points[a] + points[b])
 
     # ------------------------------------------------------------------ #
-    # Build refined cells
+    # Old cell labels
     # ------------------------------------------------------------------ #
-
     with _timed(timer, "old_celllabels"):
         old_celllabels = np.empty(ncells, dtype=int)
+
         for label, ids in mesh.labels.cell.items():
             old_celllabels[np.asarray(ids, dtype=int)] = label
 
+    # ------------------------------------------------------------------ #
+    # Marked edges as tuples
+    # ------------------------------------------------------------------ #
     with _timed(timer, "marked_edges_set"):
-        marked_edges = {
-            sorted_edge(faces[iface, 0], faces[iface, 1])
-            for iface, flag in enumerate(refine_edge)
-            if flag
-        }
+        marked_edges = set()
 
+        for iface in refined_faces:
+            a, b = map(int, faces[iface])
+            marked_edges.add((a, b) if a < b else (b, a))
+
+    # ------------------------------------------------------------------ #
+    # Refine cells, with preallocated global arrays
+    # ------------------------------------------------------------------ #
     with _timed(timer, "refine_cells_loop"):
-        new_cells = []
-        new_refedges = []
-        new_celllabels = []
         old_npoints = points.shape[0]
         old_ncells = cells.shape[0]
+
+        # In conforming 2D NVB closure, 4*ncells is a safe first upper bound.
+        # If this ever fails, increase to 8*ncells or add dynamic growth.
+        max_new_cells = 4 * ncells
+
+        new_cells = np.empty((max_new_cells, 3), dtype=np.int64)
+        new_refedges = np.empty((max_new_cells, 2), dtype=np.int64)
+        new_celllabels = np.empty(max_new_cells, dtype=np.int64)
+        parent_cell_of_child = np.empty(max_new_cells, dtype=np.int64)
+
+        nnew = 0
+        child_cells_of_parent = {}
 
         midpoint_parents = {
             int(mid): tuple(map(int, edge))
             for edge, mid in edge_to_mid.items()
         }
-
-        child_cells_of_parent = {}
-        parent_cell_of_child = []
 
         for icell in range(ncells):
             tri = list(map(int, cells[icell]))
@@ -358,15 +366,33 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
                 edge_to_mid,
             )
 
-            first_child = len(new_cells)
+            first_child = nnew
+            nchild = len(childs)
 
-            new_cells.extend(childs)
-            new_refedges.extend(child_refs)
-            new_celllabels.extend([old_celllabels[icell]] * len(childs))
+            if nnew + nchild > max_new_cells:
+                raise RuntimeError(
+                    f"max_new_cells too small: need at least {nnew + nchild}, "
+                    f"allocated {max_new_cells}"
+                )
 
-            child_ids = list(range(first_child, first_child + len(childs)))
-            child_cells_of_parent[icell] = child_ids
-            parent_cell_of_child.extend([icell] * len(childs))
+            label = old_celllabels[icell]
+
+            for child, ref in zip(childs, child_refs):
+                new_cells[nnew, :] = child
+                new_refedges[nnew, :] = ref
+                new_celllabels[nnew] = label
+                parent_cell_of_child[nnew] = icell
+                nnew += 1
+
+            child_cells_of_parent[icell] = list(range(first_child, nnew))
+
+        new_cells = new_cells[:nnew]
+        new_refedges = new_refedges[:nnew]
+        new_celllabels = new_celllabels[:nnew]
+        parent_cell_of_child = parent_cell_of_child[:nnew]
+
+    # ------------------------------------------------------------------ #
+    # Build new mesh
     # ------------------------------------------------------------------ #
     with _timed(timer, "construct_new_mesh"):
         boundary_edge_labels = _split_boundary_labels(mesh, edge_to_mid)
@@ -377,15 +403,18 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
 
         mesh2 = SimplexMesh(
             points=np.asarray(new_points, dtype=float),
-            cells=np.asarray(new_cells, dtype=int),
+            cells=new_cells,
             labels=labels,
             rebuild=False,
             check=False,
         )
 
-        mesh2.refedges = np.asarray(new_refedges, dtype=int)
-        mesh2.cell_markers = np.asarray(new_celllabels, dtype=int)
+        mesh2.refedges = new_refedges
+        mesh2.cell_markers = new_celllabels
 
+    # ------------------------------------------------------------------ #
+    # Rebuild topology/geometry
+    # ------------------------------------------------------------------ #
     with _timed(timer, "finalize"):
         mesh2.finalize_after_topology_change(timer=timer)
 
@@ -403,14 +432,13 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
         old_npoints=old_npoints,
         new_npoints=mesh2.points.shape[0],
         old_ncells=old_ncells,
-        new_ncells=mesh2.cells.shape[0],
+        new_ncells=mesh2.topology.cells.shape[0],
         midpoint_parents=midpoint_parents,
         child_cells_of_parent=child_cells_of_parent,
-        parent_cell_of_child=np.asarray(parent_cell_of_child, dtype=int),
+        parent_cell_of_child=parent_cell_of_child,
     )
 
-    return mesh2, info
-# ====================================================================== #
+    return mesh2, info# ====================================================================== #
 if __name__ == "__main__":
 
     import cProfile
@@ -421,11 +449,11 @@ if __name__ == "__main__":
 
     mesh = testmeshes.unitsquare(h=0.2)
 
-    def run():
-        for k in range(6):
+    def run(mesh):
+        for k in range(12):
 
-            xc = mesh.pointsc[:, 0]
-            yc = mesh.pointsc[:, 1]
+            xc = mesh.cell_centers[:, 0]
+            yc = mesh.cell_centers[:, 1]
 
             marked = xc**2 + yc**2 < 0.35**2
 
@@ -433,14 +461,14 @@ if __name__ == "__main__":
             print(
                 f"iter={k:2d} "
                 f"npoints={mesh.points.shape[0]:6d} "
-                f"ncells={mesh.cells.shape[0]:6d}"
+                f"ncells={mesh.topology.cells.shape[0]:6d}"
             )
 
-    cProfile.run("run()", "nvb.prof")
+    cProfile.run("run(mesh)", "nvb.prof")
 
     stats = pstats.Stats("nvb.prof")
     stats.sort_stats("cumtime").print_stats(40)
 
-    mesh.plot(bdry=True)
+    mesh.plot_boundary()
     plt.gca().set_aspect("equal")
     plt.show()

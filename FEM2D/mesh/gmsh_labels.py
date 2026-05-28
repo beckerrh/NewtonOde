@@ -75,7 +75,7 @@ def construct_boundary_labels(mesh, faces_gmsh, physlabels_gmsh):
     bdryids = np.flatnonzero(mesh.cells_of_faces[:, 1] == -1)
     bdryfaces = np.sort(mesh.faces[bdryids], axis=1)
 
-    nnpc = mesh.cells.shape[1]
+    nnpc = mesh.topology.cells.shape[1]
     dtype_g = ", ".join([str(faces_gmsh.dtype)] * (nnpc - 1))
     dtype_b = ", ".join([str(bdryfaces.dtype)] * (nnpc - 1))
     order = [f"f{i}" for i in range(nnpc - 1)]

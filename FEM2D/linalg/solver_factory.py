@@ -7,8 +7,6 @@ from FEM2D.linalg.scipy_solver import (
 )
 from FEM2D.linalg.pyamg_solver import Pyamg
 from FEM2D.linalg.multigrid import GeometricMultigrid
-from FEM2D.linalg.scipy_solver import ScipySolve
-from FEM2D.linalg.scipy_solver import scipysolvers, pyamgsolvers, othersolvers
 
 
 #-------------------------------------------------------------------#

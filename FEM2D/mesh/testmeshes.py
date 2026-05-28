@@ -24,8 +24,7 @@ def generate(geometry_builder, h=0.2, smooth=10, **kwargs):
             dim=2,
             verbose=False,
         )
-
-    return SimplexMesh(mesh)
+    return SimplexMesh.from_meshio(mesh)
 
 # ================================================================ #
 def unitline(h=0.5, a=0.0, b=1.0, use_pygmsh=False):
@@ -79,12 +78,12 @@ def unitline(h=0.5, a=0.0, b=1.0, use_pygmsh=False):
 
             vertexdata = np.array([[0], [N - 1]])
 
-            self.cells = [
+            self.topology.cells = [
                 Cell1D("line", linedata),
                 Cell1D("vertex", vertexdata),
             ]
 
-            self.cells_dict = {c.type: c.data for c in self.cells}
+            self.topology.cells_dict = {c.type: c.data for c in self.topology.cells}
 
             self.cell_sets = {
                 "10000": [None, np.array([0])],

@@ -17,11 +17,11 @@ class P1(p1general.P1general):
         super().__init__(**kwargs)
     def setMesh(self, mesh):
         super().setMesh(mesh)
-        self.computeStencilCell(self.mesh.cells)
+        self.computeStencilCell(self.mesh.topology.cells)
         self.cellgrads = self.computeCellGrads()
     def nlocal(self): return self.mesh.dimension+1
     def nunknowns(self): return self.mesh.nnodes
-    def dofspercell(self): return self.mesh.cells
+    def dofspercell(self): return self.mesh.topology.cells
     def computeCellGrads(self):
         ncells, normals, cells_of_faces, faces_of_cells, dV = self.mesh.ncells, self.mesh.normals, self.mesh.cells_of_faces, self.mesh.faces_of_cells, self.mesh.cell_volumes
         scale = -1/self.mesh.dimension
@@ -111,7 +111,7 @@ class P1(p1general.P1general):
         faces = self.mesh.bdryFaces(colors)
         nodes, cells, normalsS = self.mesh.faces[faces], self.mesh.cells_of_faces[faces,0], self.mesh.normals[faces,:dim]
         dS = linalg.norm(normalsS, axis=1)
-        simp, dV = self.mesh.cells[cells], self.mesh.cell_volumes[cells]
+        simp, dV = self.mesh.topology.cells[cells], self.mesh.cell_volumes[cells]
         dS *= nitsche_param * coeff * diffcoff[cells] * dS / dV
         r = np.einsum('n,kl,nl->nk', dS, massloc, udir[nodes])
         np.add.at(b, nodes, r)
@@ -127,7 +127,8 @@ class P1(p1general.P1general):
         faces = self.mesh.bdryFaces(colorsdir)
         nodes, cells, normalsS = self.mesh.faces[faces], self.mesh.cells_of_faces[faces,0], self.mesh.normals[faces,:dim]
         dS = linalg.norm(normalsS, axis=1)
-        simp, dV = self.mesh.cells[cells], self.mesh.cell_volumes[cells]
+        simp, dV = self.mesh.topology.cells[
+cells], self.mesh.cell_volumes[cells]
         dS *= nitsche_param * diffcoff[cells] * dS / dV
         r = np.einsum('n,kl,nl->nk', dS, massloc, u[nodes])
         np.add.at(du, nodes, r)
@@ -145,7 +146,8 @@ class P1(p1general.P1general):
         dS = np.linalg.norm(normalsS, axis=1)
         dV = self.mesh.cell_volumes[cells]
         cellgrads = self.cellgrads[cells, :, :dim]
-        simp = self.mesh.cells[cells]
+        simp = self.mesh.topology.cells[
+cells]
         facenodes = self.mesh.faces[faces]
         cols = np.tile(simp,dim)
         rows = facenodes.repeat(dim+1)
@@ -173,7 +175,8 @@ class P1(p1general.P1general):
             dS = linalg.norm(normalsS, axis=1)
             nodes = self.mesh.faces[faces]
             cells = self.mesh.cells_of_faces[faces,0]
-            simp = self.mesh.cells[cells]
+            simp = self.mesh.topology.cells[
+cells]
             cellgrads = self.cellgrads[cells, :, :dim]
             dV = self.mesh.cell_volumes[cells]
             flux[i] = np.einsum('nj,n,ni,nji->', u[simp], diffcoff[cells], normalsS, cellgrads)
@@ -353,7 +356,7 @@ class P1(p1general.P1general):
         return sparse.coo_matrix((mass.ravel(), (self.rows, self.cols)), shape=(nnodes, nnodes)).tocsr()
     # dotmat
     def formDiffusion(self, du, u, coeff):
-        graduh = np.einsum('nij,ni->nj', self.cellgrads, u[self.mesh.cells])
+        graduh = np.einsum('nij,ni->nj', self.cellgrads, u[self.mesh.topology.cells])
         graduh = np.einsum('ni,n->ni', graduh, self.mesh.cell_volumes*coeff)
         # du += np.einsum('nj,nij->ni', graduh, self.cellgrads)
         raise ValueError(f"graduh {graduh.shape} {du.shape}")
@@ -414,7 +417,8 @@ class P1(p1general.P1general):
                 xc, yc, zc = self.mesh.cell_centers[cells].T
                 bC = scale * fct(xc, yc, zc) * self.mesh.cell_volumes[cells]
                 # print("bC", bC)
-                np.add.at(b, self.mesh.cells[cells].T, bC)
+                np.add.at(b, self.mesh.topology.cells[
+cells].T, bC)
         else:
             fp1 = self.interpolateCell(rhscell)
             self.massDotCell(b, fp1, coeff=1)
@@ -465,7 +469,7 @@ class P1(p1general.P1general):
     # postprocess
     def computeErrorL2Cell(self, solexact, uh):
         xc, yc, zc = self.mesh.cell_centers.T
-        ec = solexact(xc, yc, zc) - np.mean(uh[self.mesh.cells], axis=1)
+        ec = solexact(xc, yc, zc) - np.mean(uh[self.mesh.topology.cells], axis=1)
         return np.sqrt(np.sum(ec**2* self.mesh.cell_volumes)), ec
     def computeErrorL2(self, solexact, uh):
         x, y, z = self.mesh.points.T
@@ -474,7 +478,7 @@ class P1(p1general.P1general):
         return np.sqrt( np.dot(en, self.massDot(Men,en)) ), en
     def computeErrorFluxL2(self, solexact, uh, diffcell=None):
         xc, yc, zc = self.mesh.cell_centers.T
-        graduh = np.einsum('nij,ni->nj', self.cellgrads, uh[self.mesh.cells])
+        graduh = np.einsum('nij,ni->nj', self.cellgrads, uh[self.mesh.topology.cells])
         errv = 0
         for i in range(self.mesh.dimension):
             solxi = solexact.d(i, xc, yc, zc)
@@ -546,7 +550,8 @@ class P1(p1general.P1general):
         up = np.empty(len(colors))
         for i, color in enumerate(colors):
             cells = self.mesh.labels.cell[color]
-            up[i] = np.sum(np.mean(u[self.mesh.cells[cells]],axis=1)*self.mesh.cell_volumes[cells])
+            up[i] = np.sum(np.mean(u[self.mesh.topology.cells[
+cells]],axis=1)*self.mesh.cell_volumes[cells])
         return up
 
     def computeEstimatorJumpP1(self, uh, rhs_cell, diffcell=None):
@@ -565,7 +570,7 @@ class P1(p1general.P1general):
             diffcell = np.ones(mesh.ncells)
 
         # cellwise flux q_K = A_K grad u_h |_K
-        graduh = np.einsum('nij,ni->nj', self.cellgrads[:, :, :dim], uh[mesh.cells])
+        graduh = np.einsum('nij,ni->nj', self.cellgrads[:, :, :dim], uh[mesh.topology.cells])
         flux = diffcell[:, None] * graduh
 
         # volume part: h_K^2 ||f||_K^2

@@ -53,7 +53,8 @@ class RT0():
         return np.einsum('ni, ni -> n', nnormals, v.reshape(nfaces,dim))
     def toCellMatrix(self):
         ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
-        dim, dV, p, pc, simp = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers, self.mesh.cells
+        dim, dV, p, pc = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers
+        simp = self.mesh.topology.cells
         dS = sigma * linalg.norm(normals[faces_of_cells], axis=2)/dim
         mat = np.einsum('ni, nij, n->jni', dS, pc[:,np.newaxis,:dim]-p[simp,:dim], 1/dV)
         rows = np.repeat((np.repeat(dim * np.arange(ncells), dim).reshape(ncells,dim) + np.arange(dim)).swapaxes(1,0),dim+1)
@@ -61,7 +62,8 @@ class RT0():
         return  sparse.coo_matrix((mat.ravel(), (rows.ravel(), cols.ravel())), shape=(dim*ncells, nfaces))
     def toCell(self, v):
         ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.normals, self.mesh.sigma, self.mesh.faces_of_cells
-        dim, dV, p, pc, simp = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers, self.mesh.cells
+        dim, dV, p, pc = self.mesh.dimension, self.mesh.cell_volumes, self.mesh.points, self.mesh.cell_centers
+        simp = self.mesh.topology.cells
         dS2 = linalg.norm(normals, axis=1)
         sigma2 = sigma/dV[:,np.newaxis]/dim
         return np.einsum('ni,ni,nij,ni -> nj', v[faces_of_cells], sigma2, pc[:,np.newaxis,:dim]-p[simp,:dim], dS2[faces_of_cells])

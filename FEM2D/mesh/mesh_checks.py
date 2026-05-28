@@ -5,7 +5,7 @@ from collections import Counter
 from FEM2D.mesh.mesh_edges import sorted_edge
 
 def check_faces_of_cells_local_order(mesh):
-    for ic, tri in enumerate(mesh.cells):
+    for ic, tri in enumerate(mesh.topology.cells):
         v0, v1, v2 = map(int, tri)
 
         expected = [
@@ -71,8 +71,8 @@ def check_mesh(mesh):
     cells = getattr(mesh, "cells", getattr(mesh, "cells", None))
     if cells is None:
         raise AttributeError("mesh has neither 'cells' nor 'cells'")
-    check_no_degenerate_cells(mesh.cells)
-    check_no_nonmanifold_edges(mesh.cells)
+    check_no_degenerate_cells(mesh.topology.cells)
+    check_no_nonmanifold_edges(mesh.topology.cells)
     check_faces_of_cells_local_order(mesh)
     print("nnodes", mesh.nnodes, mesh.points.shape[0])
     print("ncells", mesh.ncells, mesh.cells.shape[0])

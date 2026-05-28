@@ -14,6 +14,17 @@ class MeshLabels:
     vertex: dict = field(default_factory=dict)
     names: dict = field(default_factory=dict)
 
+@dataclass
+class MeshTopology:
+    cells: np.ndarray | None = None
+
+    # faces: np.ndarray | None = None
+    # faces_of_cells: np.ndarray | None = None
+    cells_of_faces: np.ndarray | None = None
+
+    # inner_faces: np.ndarray | None = None
+    # boundary_faces: np.ndarray | None = None
+
 class SimplexMesh:
     """
     Simplicial mesh container.
@@ -21,7 +32,7 @@ class SimplexMesh:
 
     def __init__(self, points, cells, *, labels=None, rebuild=True, check=True):
         self.points = np.asarray(points, dtype=float)
-        self.cells = np.asarray(cells, dtype=np.int64)
+        # self.topology.cells = np.asarray(cells, dtype=np.int64)
 
         if self.points.ndim != 2:
             raise ValueError(f"points must be 2D, got {self.points.shape=}")
@@ -36,10 +47,14 @@ class SimplexMesh:
                 f"points must have 2 or 3 columns, got {self.points.shape=}"
             )
 
-        self.dimension = self.cells.shape[1] - 1
         self.nnodes = self.points.shape[0]
 
         self.labels = MeshLabels()
+        self.topology = MeshTopology()
+        self.topology.cells = np.asarray(cells, dtype=np.int64)
+
+
+        self.dimension = self.topology.cells.shape[1] - 1
 
         if labels is not None:
             self.labels.boundary = labels.get("bdrylabels", {})
@@ -70,29 +85,33 @@ class SimplexMesh:
             timer=timer,
         )
 
+    def constructInnerFaces(self):
+        from FEM2D.mesh.topology import construct_inner_faces
+        construct_inner_faces(self)
+
     def finalize_after_topology_change(self, timer):
         self.points = np.asarray(self.points)
-        self.cells = np.asarray(self.cells, dtype=int)
+        self.topology.cells = np.asarray(self.topology.cells, dtype=int)
         self.nnodes = self.points.shape[0]
-        self.ncells = self.cells.shape[0]
+        self.ncells = self.topology.cells.shape[0]
         with timer("rebuild") if timer else nullcontext():
             self._rebuild(timer=timer)
         if hasattr(self, "cell_markers"):
             with timer("celllabels") if timer else nullcontext():
                 cell_labels = {}
-
                 for icell, label in enumerate(self.cell_markers):
                     cell_labels.setdefault(int(label), []).append(icell)
-
                 self.labels.cell = {
                     label: np.asarray(ids, dtype=int)
                     for label, ids in cell_labels.items()
                 }
     def _rebuild(self, timer=None):
         with timer("construct_faces_from_cells") if timer else nullcontext():
-            topology.construct_faces_from_cells(self)
+            # topology.construct_faces_from_cells(self)
+            # topology.construct_faces_from_cells_dict(self)
+            topology.construct_faces_from_cells_vec(self)
         with timer("construct_centers_normals_volumes") if timer else nullcontext():
-            self.ncells = self.cells.shape[0]
+            self.ncells = self.topology.cells.shape[0]
             self.nfaces = self.faces.shape[0]
             geometry.construct_centers(self)
             geometry.construct_normals_and_volumes(self)
@@ -100,7 +119,7 @@ class SimplexMesh:
             topology.construct_inner_faces(self)
 
     def check(self):
-        used = np.unique(self.cells)
+        used = np.unique(self.topology.cells)
         if len(used) != self.nnodes:
             raise ValueError(f"{len(used)=} BUT {self.nnodes=}")
         if not np.all(used == np.arange(self.nnodes)):
@@ -135,27 +154,27 @@ class SimplexMesh:
         fi1_bis = np.empty_like(faces)
         for i in range(faces.shape[1]):
             fi0_bis[:, i] = self.faces_of_cells[ci0][
-                self.cells[ci0] == faces[:, i][:, None]
+                self.topology.cells[ci0] == faces[:, i][:, None]
             ]
             fi1_bis[:, i] = self.faces_of_cells[ci1][
-                self.cells[ci1] == faces[:, i][:, None]
+                self.topology.cells[ci1] == faces[:, i][:, None]
             ]
         return fi0_bis, fi1_bis
 
     def computeSimpOfVert(self, test=False):
         S = sparse.dok_matrix((self.nnodes, self.ncells), dtype=int)
         for ic in range(self.ncells):
-            S[self.cells[ic, :], ic] = ic + 1
+            S[self.topology.cells[ic, :], ic] = ic + 1
         S = S.tocsr()
         S.data -= 1
         self.simpOfVert = S
 
     def write(self, filename, dirname=None, data=None):
-        from FEM2D.mesh.meshio_io import write
+        from FEM2D.mesh.mesh_io import write
         return write(self, filename, dirname=dirname, data=data)
 
     def writemeshio(self, filename, dirname=None, data=None):
-        from .meshio_io import writemeshio
+        from .mesh_io import writemeshio
         return writemeshio(self, filename, dirname=dirname, data=data)
 
     def plot_boundary(self, **kwargs):
@@ -169,12 +188,6 @@ class SimplexMesh:
         s = f"dim/nnodes/nfaces/ncells: {self.dimension}/{self.nnodes}/{self.nfaces}/{self.ncells}"
         s += f"\nbdrylabels={list(self.labels.boundary.keys())}"
         s += f"\ncellsoflabel={list(self.labels.cell.keys())}"
-        # if hasattr(self, "labeldict_i2s"):
-        #     s += f"\nbdrylabels={[self.labeldict_i2s.get(k, k) for k in self.labels.boundary.keys()]}"
-        #     s += f"\ncellsoflabel={[self.labeldict_i2s.get(k, k) for k in self.labels.cell.keys()]}"
-        # else:
-        #     s += f"\nbdrylabels={list(self.labels.boundary.keys())}"
-        #     s += f"\ncellsoflabel={list(self.labels.cell.keys())}"
         return s
 
     def __str__(self):
