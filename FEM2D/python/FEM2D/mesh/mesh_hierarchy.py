@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from FEM2D.mesh.simplex_mesh import SimplexMesh
-from FEM2D.mesh.refinement_info import RefinementInfo
+from .simplex_mesh import SimplexMesh
+from .refinement_info import RefinementInfo
 
 
 @dataclass

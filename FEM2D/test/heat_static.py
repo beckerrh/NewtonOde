@@ -3,18 +3,22 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from pathlib import Path
 import sys
-root = Path(__file__).resolve().parents[2]
+root = Path(__file__).resolve().parents[1] / "python"
 sys.path.insert(0, str(root))
 
-from FEM2D.models.elliptic import Elliptic
-from FEM2D.models.application import Application
-from FEM2D.mesh import marking
+from FEM2D.models import Elliptic
+from FEM2D.models import Application
 from FEM2D.mesh.mesh_hierarchy import MeshHierarchy
-from FEM2D.linalg.solver_factory import getLinearSolver
-from FEM2D.fems import mesh_transfer, transfer_p1
+from FEM2D.mesh import marking
+
+
+from FEM2D.linalg import solver_factory
+from FEM2D.fems import transfer_p1, mesh_transfer
 
 from Utility import timer
 from types import SimpleNamespace
+
+
 
 
 # define Application class
@@ -62,7 +66,7 @@ plotting = False
 mesh_timer = timer.Timer()
 linear_solver = 'pyamg'
 linear_solver = 'geommg'
-B = getLinearSolver(
+B = solver_factory.getLinearSolver(
     method=linear_solver,
     As=As,
     transfers=transfers,

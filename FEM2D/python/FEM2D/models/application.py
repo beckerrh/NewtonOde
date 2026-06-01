@@ -1,6 +1,6 @@
 import pygmsh
-from FEM2D.models.problemdata import ProblemData
-from FEM2D.mesh.simplex_mesh import SimplexMesh
+from .problemdata import ProblemData
+from ..mesh import SimplexMesh
 
 # ================================================================ #
 class Application:

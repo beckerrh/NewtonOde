@@ -7,9 +7,7 @@ Created on Sun Dec  4 18:14:29 2016
 import numpy as np
 import scipy.linalg as linalg
 import scipy.sparse as sparse
-from FEM2D import mesh
-from FEM2D.fems import p1general, barycentric
-import FEM2D.fems.data
+from . import barycentric, p1general, data
 
 #=================================================================#
 class P1(p1general.P1general):
@@ -155,7 +153,7 @@ cells]
         # mat = np.repeat(mat,dim)
         # print(f"{cols.shape=} {rows.shape=} {mat.shape=}")
         AN = sparse.coo_matrix((mat.ravel(), (rows.ravel(), cols.ravel())), shape=(nnodes, nnodes)).tocsr()
-        massloc = barycentric.tensor(d=dim-1, k=2)
+        massloc = barycentric.tensor(d=dim - 1, k=2)
         massloc = np.diag(np.sum(massloc,axis=1))
         # print(f"{massloc=}")
         mat = np.einsum('f,ij->fij', nitsche_param * dS**2/dV*diffcoff[cells], massloc)
@@ -396,7 +394,7 @@ cells]
             if lumped:
                 np.add.at(b, nodes, f[nodes]*dS[:,np.newaxis]/self.mesh.dimension)
             else:
-                massloc = barycentric.tensor(d=self.mesh.dimension-1, k=2)
+                massloc = barycentric.tensor(d=self.mesh.dimension - 1, k=2)
                 r = np.einsum('n,kl,nl->nk', dS, massloc, f[nodes])
                 np.add.at(b, nodes, r)
         return b

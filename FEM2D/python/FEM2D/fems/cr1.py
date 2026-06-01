@@ -5,13 +5,10 @@ Created on Sun Dec  4 18:14:29 2016
 @author: becker
 """
 
-from matplotlib import colors
 import numpy as np
 import scipy.linalg as linalg
 import scipy.sparse as sparse
-from FEM2D.fems import barycentric
-from FEM2D.fems import p1general
-import FEM2D.fems.data, FEM2D.fems.rt0
+from . import barycentric, p1general, data, rt0
 
 #=================================================================#
 class CR1(p1general.P1general):
@@ -365,10 +362,8 @@ class CR1(p1general.P1general):
         normalsS = self.mesh.geometry.normals[innerfaces]
         dS = linalg.norm(normalsS, axis=1)
         faces = self.mesh.topology.faces[self.mesh.topology.inner_faces]
-        # ind0 = npext.positionin(faces, self.mesh.topology.cells[
-ci0])
-        # ind1 = npext.positionin(faces, self.mesh.topology.cells[
-ci1])
+        # ind0 = npext.positionin(faces, self.mesh.topology.cells[ci0])
+        # ind1 = npext.positionin(faces, self.mesh.topology.cells[ci1])
         # fi0 = np.take_along_axis(self.mesh.topology.faces_of_cells[ci0], ind0, axis=1)
         # fi1 = np.take_along_axis(self.mesh.topology.faces_of_cells[ci1], ind1, axis=1)
         fi0, fi1 = self.mesh.topology.faces_of_cellsNotOnInnerFaces(ci0, ci1)
@@ -410,10 +405,8 @@ ci1])
         normalsS = self.mesh.geometry.normals[innerfaces]
         dS = linalg.norm(normalsS, axis=1)
         faces = self.mesh.topology.faces[self.mesh.topology.inner_faces]
-        # ind0 = npext.positionin(faces, self.mesh.topology.cells[
-ci0])
-        # ind1 = npext.positionin(faces, self.mesh.topology.cells[
-ci1])
+        # ind0 = npext.positionin(faces, self.mesh.topology.cells[ci0])
+        # ind1 = npext.positionin(faces, self.mesh.topology.cells[ci1])
         # fi0 = np.take_along_axis(self.mesh.topology.faces_of_cells[ci0], ind0, axis=1)
         # fi1 = np.take_along_axis(self.mesh.topology.faces_of_cells[ci1], ind1, axis=1)
         fi0, fi1 = self.mesh.topology.faces_of_cellsNotOnInnerFaces(ci0, ci1)

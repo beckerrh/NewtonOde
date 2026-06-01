@@ -8,7 +8,7 @@ Created on Sun Dec  4 18:14:29 2016
 import numpy as np
 import scipy.linalg as linalg
 import scipy.sparse as sparse
-from FEM2D import fems
+from . import cr1, data
 
 #=================================================================#
 class RT0():
@@ -43,7 +43,7 @@ class RT0():
 
         return np.einsum("ni,in->n", nnormals, fa)
     def interpolateFromFem(self, v, fem, stack_storage):
-        assert isinstance(fem, fems.cr1.CR1)
+        assert isinstance(fem, cr1.CR1)
         dim = self.mesh.dimension
         nfaces, normals = self.mesh.nfaces, self.mesh.geometry.normals[:,:dim]
         assert v.shape[0] == dim*nfaces
@@ -302,7 +302,7 @@ class RT0():
         return A
 
     def prepareBoundary(self, colorsneumann):
-        bdrydata = fems.data.BdryData()
+        bdrydata = data.BdryData()
         bdrydata.facesneumann = np.empty(shape=(0), dtype=int)
         for color in colorsneumann:
             bdrydata.facesneumann = np.unique(np.union1d(bdrydata.facesneumann, self.mesh.labels.boundary[color]))

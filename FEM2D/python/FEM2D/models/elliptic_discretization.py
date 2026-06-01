@@ -1,5 +1,6 @@
 import numpy as np
-from FEM2D import fems
+from ..fems import cr1, p1, rt0
+from ..fems import data as femdata
 from Utility.analyticalfunction import AnalyticalFunction
 
 # ================================================================= #
@@ -21,14 +22,14 @@ class EllipticDiscretization:
         self.dirichletmethod = self.disc_params.pop('dirichletmethod','nitsche')
         if self.dirichletmethod=='nitsche':
             self.nitscheparam = self.disc_params.pop('nitscheparam', 10)
-        if fem_name == 'p1': self.fem = fems.p1.P1()
-        elif fem_name == 'cr1': self.fem = fems.cr1.CR1()
+        if fem_name == 'p1': self.fem = p1.P1()
+        elif fem_name == 'cr1': self.fem = cr1.CR1()
         else: raise NotImplementedError(f"{self.fem=}")
         self._checkProblemData()
         self.kheatcell = self.compute_cell_vector_from_params('kheat', self.problemdata.params)
         if self.hasconvection:
-            self.convdata = fems.data.ConvectionData()
-            rt = fems.rt0.RT0(mesh=self.mesh)
+            self.convdata = femdata.ConvectionData()
+            rt = rt0.RT0(mesh=self.mesh)
             if 'convection' in self.problemdata.params.fct_glob:
                 convection_given = self.problemdata.params.fct_glob['convection']
                 if not isinstance(convection_given, list):

@@ -1,4 +1,4 @@
-from FEM2D.linalg.solver import IterativeSolver
+from .solver import IterativeSolver
 
 
 #=================================================================#

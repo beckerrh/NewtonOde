@@ -7,7 +7,7 @@ Created on Sun Dec  4 18:14:29 2016
 import numpy as np
 import numpy.linalg as linalg
 import scipy.sparse as sparse
-from FEM2D.mesh.simplex_mesh import SimplexMesh
+from ..mesh import SimplexMesh
 
 
 #=================================================================#

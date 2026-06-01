@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.sparse.linalg as splinalg
 
-from FEM2D.linalg.solver import IterativeSolver
+from .solver import IterativeSolver
 
 
 #=================================================================#

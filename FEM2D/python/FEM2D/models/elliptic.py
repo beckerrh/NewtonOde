@@ -1,6 +1,6 @@
 import numpy as np
-from FEM2D.models.model import Model
-from FEM2D.models.elliptic_discretization import EllipticDiscretization
+from .model import Model
+from .elliptic_discretization import EllipticDiscretization
 
 # ================================================================= #
 class Elliptic(Model):

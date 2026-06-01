@@ -1,12 +1,29 @@
 import numpy as np
 
+from FEM2D.mesh.backend import backend
+
+
+# ================================================================ #
+def construct_faces_from_cells(mesh, build_edge2face=True):
+
+    if backend is not None:
+        return construct_faces_from_cells_cpp(
+            mesh,
+            build_edge2face=build_edge2face,
+        )
+
+    return construct_faces_from_cells_python(
+        mesh,
+        build_edge2face=build_edge2face,
+    )
 
 def construct_inner_faces(mesh):
     mesh.topology.inner_faces = mesh.topology.cells_of_faces[:, 1] >= 0
     mesh.topology.cells_of_inner_faces = mesh.topology.cells_of_faces[mesh.topology.inner_faces]
 
 
-def construct_faces_from_cells(mesh, build_edge2face=True):
+# ================================================================ #
+def construct_faces_from_cells_python(mesh, build_edge2face=True):
     """
     Vectorized construction of triangular mesh topology.
 
@@ -116,5 +133,30 @@ def construct_faces_from_cells(mesh, build_edge2face=True):
     assert mesh.topology.cells_of_faces.shape == (mesh.nfaces, 2)
     assert mesh.topology.faces_of_cells.min() >= 0
     assert mesh.topology.faces_of_cells.max() < mesh.nfaces
+
+    return faces, faces_of_cells, cells_of_faces
+
+# ================================================================ #
+def construct_faces_from_cells_cpp(mesh, build_edge2face=True):
+    r = backend.construct_faces_from_cells(
+        np.asarray(mesh.topology.cells, dtype=np.int32)
+    )
+
+    faces = np.asarray(r["faces"], dtype=np.int64)
+    faces_of_cells = np.asarray(r["faces_of_cells"], dtype=np.int64)
+    cells_of_faces = np.asarray(r["cells_of_faces"], dtype=np.int64)
+
+    mesh.topology.faces = faces
+    mesh.topology.faces_of_cells = faces_of_cells
+    mesh.topology.cells_of_faces = cells_of_faces
+    mesh.nfaces = faces.shape[0]
+
+    if build_edge2face:
+        mesh.edge2face = {
+            (int(a), int(b)): int(i)
+            for i, (a, b) in enumerate(faces)
+        }
+    else:
+        mesh.edge2face = None
 
     return faces, faces_of_cells, cells_of_faces

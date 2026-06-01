@@ -80,9 +80,8 @@ class SimplexMesh:
         return from_meshio(mesh)
 
     def refine_nvb(self, marked, debug=False, timer=None):
-        from FEM2D.mesh import refinement_nvb
-
-        return refinement_nvb.refine_nvb(
+        from . import refine_nvb
+        return refine_nvb.refine_nvb(
             self,
             marked,
             debug=debug,
@@ -90,7 +89,7 @@ class SimplexMesh:
         )
 
     def construct_inner_faces(self):
-        from FEM2D.mesh.topology import construct_inner_faces
+        from .topology import construct_inner_faces
         construct_inner_faces(self)
 
     def finalize_after_topology_change(self, timer):

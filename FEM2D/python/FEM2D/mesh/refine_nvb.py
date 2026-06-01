@@ -9,17 +9,65 @@ Robust strategy:
 
 This avoids fragile incremental updates of faces_of_cells/cells_of_faces.
 """
+from readline import backend
 
 import numpy as np
 from contextlib import nullcontext
 
-from FEM2D.mesh.mesh_checks import check_no_degenerate_cells, check_no_nonmanifold_edges, check_boundary_normals
+from pathlib import Path
+import sys
+
+root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(root))
+
+from FEM2D.mesh.backend import backend
+
+from FEM2D.mesh.mesh_checks import (
+    check_no_degenerate_cells,
+    check_no_nonmanifold_edges,
+    check_boundary_normals,
+)
+
+from FEM2D.mesh import RefinementInfo
+from FEM2D.mesh import SimplexMesh
 
 
-from FEM2D.mesh.refinement_info import RefinementInfo
-from FEM2D.mesh.simplex_mesh import SimplexMesh
-from FEM2D.mesh.refine_cell_nvb_iterative import _refine_cell_nvb_iterative, _refine_cell_nvb_iterative_keyed
 
+
+
+# ====================================================================== #
+def refine_nvb(mesh, marked, backend_name="python", debug=False, timer=None):
+    if backend_name == "cpp":
+        if backend is None:
+            raise RuntimeError("C++ backend requested but not available")
+
+        r = backend.refine_nvb(
+            mesh.geometry.points,
+            mesh.topology.cells,
+            mesh.refedges,
+            mesh.celllabels,
+            np.asarray(marked, dtype=np.int64),
+        )
+
+        mesh.geometry.points = r["points"]
+        mesh.topology.cells = r["cells"]
+        mesh.refedges = r["refedges"]
+        mesh.celllabels = r["celllabels"]
+
+        mesh.finalize_after_topology_change(timer=timer)
+        return mesh
+
+    return refine_nvb_python(mesh, marked, debug=debug, timer=timer)
+
+# ====================================================================== #
+def refine_nvb_cpp(mesh, marked, debug=False, timer=None):
+    return refine_nvb_python(
+        mesh,
+        marked,
+        debug=debug,
+        timer=timer,
+        use_backend=True,
+    )
 
 def _timed(timer, name):
     return timer(name) if timer is not None else nullcontext()
@@ -113,10 +161,8 @@ def _apply_boundary_labels(mesh, boundary_edge_labels):
 
     mesh.labels.boundary = bdrylabels
 
-def _refine_cell_nvb_write(tri, refedge,
-    marked_keys, key_to_mid, nkey,
-    new_cells, new_refedges,
-    pos, maxpos):
+# ====================================================================== #
+def _refine_cell_nvb_write(tri, refedge, marked_keys, key_to_mid, nkey, new_cells, new_refedges, pos, maxpos):
     a = int(tri[0]); b = int(tri[1]); c = int(tri[2])
     r0 = int(refedge[0]); r1 = int(refedge[1])
 
@@ -152,6 +198,8 @@ def _refine_cell_nvb_write(tri, refedge,
         stack.append((z, r0, m, z, r0))
 
     return pos
+
+# ====================================================================== #
 def close_marked_faces_nvb(cells_of_faces, cell_ref_faces, marked):
     """
     NVB closure using face indices.
@@ -210,8 +258,9 @@ def close_marked_faces_nvb(cells_of_faces, cell_ref_faces, marked):
     refined_faces = np.flatnonzero(refine_face)
 
     return marked_bool, refine_face, refined_faces
+
 # ====================================================================== #
-def refine_nvb(mesh, marked, debug=False, timer=None):
+def refine_nvb_python(mesh, marked, debug=False, timer=None, use_backend=False):
     """
     Variant of refine_nvb with preallocated global cell/refedge/label arrays.
     Intended for timing comparison against refine_nvb.
@@ -239,7 +288,7 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
 
         if debug:
             if debug:
-                from FEM2D.mesh.nvb_debug import check_refedges, debug_nonmanifold_edges
+                from FEM2D.mesh import check_refedges, debug_nonmanifold_edges
             check_refedges(mesh, "entry")
 
         cell_ref_faces = np.empty(ncells, dtype=np.int64)
@@ -307,64 +356,110 @@ def refine_nvb(mesh, marked, debug=False, timer=None):
                 marked_edge_keys.add(a * nkey + b)
             else:
                 marked_edge_keys.add(b * nkey + a)
-
         edgekey_to_mid = {}
         for (a, b), m in edge_to_mid.items():
             if a < b:
                 edgekey_to_mid[a * nkey + b] = m
             else:
                 edgekey_to_mid[b * nkey + a] = m
-
         old_npoints = points.shape[0]
         old_ncells = cells.shape[0]
-
-
-        # In conforming 2D NVB closure, 4*ncells is a safe first upper bound.
-        # If this ever fails, increase to 8*ncells or add dynamic growth.
         max_new_cells = 4 * ncells
-
-        new_cells = np.empty((max_new_cells, 3), dtype=np.int64)
-        new_refedges = np.empty((max_new_cells, 2), dtype=np.int64)
-        new_celllabels = np.empty(max_new_cells, dtype=np.int64)
-        parent_cell_of_child = np.empty(max_new_cells, dtype=np.int64)
-
-        nnew = 0
-        child_cells_of_parent = {}
 
         midpoint_parents = {
             int(mid): tuple(map(int, edge))
             for edge, mid in edge_to_mid.items()
         }
-        for icell in range(ncells):
 
-            first_child = nnew
+        if use_backend:
+            import FEM2D._refine as _refine
 
-            nnew = _refine_cell_nvb_write(
-                cells[icell],
-                refedges[icell],
-                marked_edge_keys,
-                edgekey_to_mid,
-                nkey,
-                new_cells,
-                new_refedges,
-                nnew,
-                max_new_cells,
+            marked_edge_keys = np.fromiter(
+                (
+                    (a * nkey + b) if a < b else (b * nkey + a)
+                    for a, b in marked_edges
+                ),
+                dtype=np.int64,
             )
 
-            if nnew > max_new_cells:
-                raise RuntimeError(
-                    f"max_new_cells too small: need at least {nnew}, "
-                    f"allocated {max_new_cells}"
+            edgekey_to_mid_keys = np.fromiter(
+                (
+                    (a * nkey + b) if a < b else (b * nkey + a)
+                    for (a, b), m in edge_to_mid.items()
+                ),
+                dtype=np.int64,
+            )
+
+            edgekey_to_mid_vals = np.fromiter(
+                (m for (a, b), m in edge_to_mid.items()),
+                dtype=np.int32,
+            )
+
+            r = _refine.refine_cells_nvb(
+                np.asarray(cells, dtype=np.int32),
+                np.asarray(refedges, dtype=np.int32),
+                marked_edge_keys,
+                edgekey_to_mid_keys,
+                edgekey_to_mid_vals,
+                np.asarray(old_celllabels, dtype=np.int32),
+                max_new_cells,
+                nkey,
+            )
+
+            new_cells = np.asarray(r["cells"], dtype=np.int64)
+            new_refedges = np.asarray(r["refedges"], dtype=np.int64)
+            new_celllabels = np.asarray(r["celllabels"], dtype=np.int64)
+            parent_cell_of_child = np.asarray(r["parent_cell_of_child"], dtype=np.int64)
+            nnew = int(r["nnew"])
+
+            child_cells_of_parent = {}
+            for ichild, iparent in enumerate(parent_cell_of_child):
+                child_cells_of_parent.setdefault(int(iparent), []).append(int(ichild))
+
+
+        else:
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+            new_cells = np.empty((max_new_cells, 3), dtype=np.int64)
+            new_refedges = np.empty((max_new_cells, 2), dtype=np.int64)
+            new_celllabels = np.empty(max_new_cells, dtype=np.int64)
+            parent_cell_of_child = np.empty(max_new_cells, dtype=np.int64)
+            nnew = 0
+            child_cells_of_parent = {}
+            midpoint_parents = {
+                int(mid): tuple(map(int, edge))
+                for edge, mid in edge_to_mid.items()
+            }
+            for icell in range(ncells):
+
+                first_child = nnew
+
+                nnew = _refine_cell_nvb_write(
+                    cells[icell],
+                    refedges[icell],
+                    marked_edge_keys,
+                    edgekey_to_mid,
+                    nkey,
+                    new_cells,
+                    new_refedges,
+                    nnew,
+                    max_new_cells,
                 )
 
-            new_celllabels[first_child:nnew] = old_celllabels[icell]
-            parent_cell_of_child[first_child:nnew] = icell
+                if nnew > max_new_cells:
+                    raise RuntimeError(
+                        f"max_new_cells too small: need at least {nnew}, "
+                        f"allocated {max_new_cells}"
+                    )
 
-            child_cells_of_parent[icell] = list(range(first_child, nnew))
-        new_cells = new_cells[:nnew]
-        new_refedges = new_refedges[:nnew]
-        new_celllabels = new_celllabels[:nnew]
-        parent_cell_of_child = parent_cell_of_child[:nnew]
+                new_celllabels[first_child:nnew] = old_celllabels[icell]
+                parent_cell_of_child[first_child:nnew] = icell
+
+                child_cells_of_parent[icell] = list(range(first_child, nnew))
+            new_cells = new_cells[:nnew]
+            new_refedges = new_refedges[:nnew]
+            new_celllabels = new_celllabels[:nnew]
+            parent_cell_of_child = parent_cell_of_child[:nnew]
+    # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
     # ------------------------------------------------------------------ #
     # Build new mesh
@@ -444,6 +539,10 @@ if __name__ == "__main__":
     stats = pstats.Stats("nvb.prof")
     stats.sort_stats("cumtime").print_stats(40)
 
-    mesh.plot_boundary()
-    plt.gca().set_aspect("equal")
-    plt.show()
+    # mesh.plot_boundary()
+    # plt.gca().set_aspect("equal")
+    # plt.show()
+
+    import FEM2D._mesh_cpp as cpp
+
+    print(dir(cpp))

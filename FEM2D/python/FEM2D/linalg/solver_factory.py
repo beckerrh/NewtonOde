@@ -1,12 +1,12 @@
-from FEM2D.linalg.scipy_solver import (
+from .scipy_solver import (
     ScipySolve,
     ScipySpSolve,
     scipysolvers,
     pyamgsolvers,
     othersolvers,
 )
-from FEM2D.linalg.pyamg_solver import Pyamg
-from FEM2D.linalg.multigrid import GeometricMultigrid
+from .pyamg_solver import Pyamg
+from .multigrid import GeometricMultigrid
 
 
 #-------------------------------------------------------------------#

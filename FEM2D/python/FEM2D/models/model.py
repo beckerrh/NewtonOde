@@ -6,11 +6,9 @@ Created on Sun Dec  4 18:14:29 2016
 """
 import shutil, pathlib
 import numpy as np
-from types import SimpleNamespace
 
 import Utility.timer
-import FEM2D.models.problemdata
-from FEM2D.linalg import vectorview
+
 
 #=================================================================#
 class Model(object):
