@@ -11,7 +11,6 @@ from ..mesh import SimplexMesh
 
 
 #=================================================================#
-# class P1general(fems.Fem):
 class P1general():
     def __init__(self, **kwargs):
         pass
@@ -19,6 +18,13 @@ class P1general():
         s = self.__class__.__name__
         if hasattr(self, 'mesh'): s+= " (" +str(self.mesh) + ")"
         return s
+
+    def _xyz_from_points(self, points):
+        x = points[:, 0]
+        y = points[:, 1] if points.shape[1] > 1 else np.zeros_like(x)
+        z = points[:, 2] if points.shape[1] > 2 else np.zeros_like(x)
+        return x, y, z
+
     def setMesh(self, mesh, innersides=False):
         self.mesh = mesh
         self.nloc = self.nlocal()

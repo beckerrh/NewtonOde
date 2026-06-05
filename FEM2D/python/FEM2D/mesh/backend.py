@@ -1,11 +1,10 @@
-# backend.py
+cpp = True
 
-USE_CPP = True
-
-backend = None
-
-if USE_CPP:
+if cpp:
     try:
         import FEM2D._meshcpp as backend
-    except ImportError:
-        pass
+    except ImportError as e:
+        print(f"Could not import FEM2D._meshcpp: {e}")
+        backend = None
+else:
+    backend = None

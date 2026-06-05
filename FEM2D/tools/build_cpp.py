@@ -29,7 +29,6 @@ cmd_configure = [
 cmd_build = [
     cmake,
     "--build", str(build_dir),
-    "--clean-first",
 ]
 
 print(f"Project root : {root}")

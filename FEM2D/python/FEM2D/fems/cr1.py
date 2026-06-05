@@ -8,7 +8,20 @@ Created on Sun Dec  4 18:14:29 2016
 import numpy as np
 import scipy.linalg as linalg
 import scipy.sparse as sparse
-from . import barycentric, p1general, data, rt0
+from . import barycentric, p1general, data, mesh_transfer, rt0
+
+@staticmethod
+def faces_of_cells_not_on_faces(faces_of_cells, cells0, cells1, faces):
+    f0 = faces_of_cells[cells0]
+    f1 = faces_of_cells[cells1]
+
+    mask0 = f0 != faces[:, None]
+    mask1 = f1 != faces[:, None]
+
+    return (
+        f0[mask0].reshape(-1, f0.shape[1] - 1),
+        f1[mask1].reshape(-1, f1.shape[1] - 1),
+    )
 
 #=================================================================#
 class CR1(p1general.P1general):
@@ -18,6 +31,26 @@ class CR1(p1general.P1general):
         super().setMesh(mesh)
         self.computeStencilCell(self.mesh.topology.faces_of_cells)
         self.cellgrads = self.computeCellGrads()
+        self.dim = mesh.dimension
+        if self.dim == 2:
+            self.face_x = mesh.geometry.face_centers[:, 0]
+            self.face_y = mesh.geometry.face_centers[:, 1]
+            self.face_z = np.zeros(mesh.nfaces)
+        elif self.dim == 3:
+            self.face_x = mesh.geometry.face_centers[:, 0]
+            self.face_y = mesh.geometry.face_centers[:, 1]
+            self.face_z = mesh.geometry.face_centers[:, 2]
+        else:
+            raise ValueError(f"Unsupported dimension {self.dim}")
+        if self.dim == 2:
+            self.cell_x = mesh.geometry.cell_centers[:, 0]
+            self.cell_y = mesh.geometry.cell_centers[:, 1]
+            self.cell_z = np.zeros(mesh.ncells)
+        else:
+            self.cell_x = mesh.geometry.cell_centers[:, 0]
+            self.cell_y = mesh.geometry.cell_centers[:, 1]
+            self.cell_z = mesh.geometry.cell_centers[:, 2]
+
     def nlocal(self): return self.mesh.dimension+1
     def nunknowns(self): return self.mesh.nfaces
     def dofspercell(self): return self.mesh.topology.faces_of_cells
@@ -26,10 +59,10 @@ class CR1(p1general.P1general):
         if u.shape[0] != self.mesh.nfaces: raise ValueError(f"{u.shape=} {self.mesh.nfaces=}")
         unodes = np.zeros(self.mesh.nnodes, dtype=u.dtype)
         scale = self.mesh.dimension
-        np.add.at(unodes, self.mesh.cells.T, np.sum(u[self.mesh.topology.faces_of_cells], axis=1)[np.newaxis,:])
-        np.add.at(unodes, self.mesh.cells.T, -scale*u[self.mesh.topology.faces_of_cells].T)
+        np.add.at(unodes, self.mesh.topology.cells.T, np.sum(u[self.mesh.topology.faces_of_cells], axis=1)[np.newaxis,:])
+        np.add.at(unodes, self.mesh.topology.cells.T, -scale*u[self.mesh.topology.faces_of_cells].T)
         countnodes = np.zeros(self.mesh.nnodes, dtype=int)
-        np.add.at(countnodes, self.mesh.cells.T, 1)
+        np.add.at(countnodes, self.mesh.topology.cells.T, 1)
         unodes /= countnodes
         return unodes
     # def prepareAdvection(self, beta, scale):
@@ -69,7 +102,7 @@ class CR1(p1general.P1general):
         return (normals[faces_of_cells].T * self.mesh.sigma.T / dV.T).T
     # strong bc
     def prepareBoundary(self, colorsdir, colorsflux=[]):
-        bdrydata = FEM2D.fem.data.BdryData()
+        bdrydata = data.BdryData()
         bdrydata.facesdirall = np.empty(shape=(0), dtype=np.uint32)
         bdrydata.colorsdir = colorsdir
         for color in colorsdir:
@@ -88,23 +121,52 @@ class CR1(p1general.P1general):
         dim, faces = self.mesh.dimension, self.mesh.bdryFaces(colors)
         cells = self.mesh.topology.cells_of_faces[faces,0]
         normalsS = self.mesh.geometry.normals[faces][:,:dim]
+
         dS, dV = np.linalg.norm(normalsS,axis=1), self.mesh.geometry.cell_volumes[cells]
         mat = np.einsum('f,fi,fji->fj', coeff*udir[faces]*diffcoff[cells], normalsS, self.cellgrads[cells, :, :dim])
         np.add.at(b, self.mesh.topology.faces_of_cells[cells], -mat)
         self.massDotBoundary(b, f=udir, colors=colors, coeff=coeff*nitsche_param*diffcoff[cells] * dS/dV, lumped=lumped)
-    def computeFormNitscheDiffusion(self, nitsche_param, du, u, diffcoff, colorsdir):
-        # if self.params_str['dirichletmethod'] != 'nitsche': return
-        # nitsche_param=self.params_float['nitscheparam']
+    def computeFormNitscheDiffusion(self, nitsche_param, du, u, diffcoff, colorsdir, lumped=False):
         assert u.shape[0] == self.mesh.nfaces
-        dim, faces = self.mesh.dimension, self.mesh.bdryFaces(colorsdir)
-        cells = self.mesh.topology.cells_of_faces[faces,0]
-        foc, normalsS, cellgrads = self.mesh.topology.faces_of_cells[cells], self.mesh.geometry.normals[faces][:,:dim], self.cellgrads[cells, :, :dim]
-        dS, dV = np.linalg.norm(normalsS,axis=1), self.mesh.geometry.cell_volumes[cells]
-        mat = np.einsum('f,fk,fik->fi', u[faces]*diffcoff[cells], normalsS, cellgrads)
-        np.add.at(du, foc, -mat)
-        mat = np.einsum('f,fk,fjk,fj->f', diffcoff[cells], normalsS, cellgrads, u[foc])
+
+        dim = self.mesh.dimension
+        faces = self.mesh.bdryFaces(colorsdir)
+        cells = self.mesh.topology.cells_of_faces[faces, 0]
+
+        foc = self.mesh.topology.faces_of_cells[cells]
+        normalsS = self.mesh.geometry.normals[faces][:, :dim]
+        cellgrads = self.cellgrads[cells, :, :dim]
+
+        dS = np.linalg.norm(normalsS, axis=1)
+        dV = self.mesh.geometry.cell_volumes[cells]
+
+        # - AN @ u
+        mat = np.einsum(
+            "f,fk,fjk,fj->f",
+            diffcoff[cells],
+            normalsS,
+            cellgrads,
+            u[foc],
+        )
         np.add.at(du, faces, -mat)
-        self.massDotBoundary(du, f=u, colors=colorsdir, coeff=nitsche_param*diffcoff[cells]* dS/dV)
+
+        # - AN.T @ u
+        mat = np.einsum(
+            "f,fk,fik->fi",
+            diffcoff[cells] * u[faces],
+            normalsS,
+            cellgrads,
+        )
+        np.add.at(du, foc, -mat)
+
+        # + AD @ u
+        self.massDotBoundary(
+            du,
+            f=u,
+            colors=colorsdir,
+            coeff=nitsche_param * diffcoff[cells] * dS / dV,
+            lumped=lumped,
+        )
     def computeMatrixNitscheDiffusion(self, nitsche_param, diffcoff, colors, coeff=1, lumped=False):
         nfaces, ncells, dim, nlocal  = self.mesh.nfaces, self.mesh.ncells, self.mesh.dimension, self.nlocal()
         # if self.params_str['dirichletmethod'] != 'nitsche': return sparse.coo_matrix((nfaces,nfaces))
@@ -113,6 +175,7 @@ class CR1(p1general.P1general):
         if not isinstance(coeff, (float,int)): assert coeff.shape[0]==faces.shape[0]
         cells = self.mesh.topology.cells_of_faces[faces, 0]
         normalsS = self.mesh.geometry.normals[faces][:, :dim]
+
         cols = self.mesh.topology.faces_of_cells[cells, :].ravel()
         rows = faces.repeat(nlocal)
         mat = np.einsum('f,fi,fji->fj', coeff*diffcoff[cells], normalsS, self.cellgrads[cells, :, :dim]).ravel()
@@ -152,7 +215,7 @@ class CR1(p1general.P1general):
         # method = self.params_str['dirichletmethod']
         # if method not in ['strong','new']: return
         facesdirflux, facesinner, facesdirall, colorsdir = bdrydata.facesdirflux, bdrydata.facesinner, bdrydata.facesdirall, bdrydata.colorsdir
-        x, y, z = self.mesh.geometry.face_centers.T
+        x, y, z = self.face_x, self.face_y, self.face_z
         for color, faces in facesdirflux.items():
             bdrydata.bsaved[color] = b[faces]
         help = np.zeros_like(b)
@@ -195,8 +258,7 @@ class CR1(p1general.P1general):
         return A
     # interpolate
     def interpolate(self, f):
-        x, y, z = self.mesh.geometry.face_centers.T
-        return f(x, y, z)
+        return f(self.face_x, self.face_y, self.face_z)
     def interpolateBoundary(self, colors, f, lumped=False):
         """
         :param colors: set of colors to interpolate
@@ -210,13 +272,16 @@ class CR1(p1general.P1general):
                 faces = self.mesh.labels.boundary[color]
                 ci = self.mesh.topology.cells_of_faces[faces][:, 0]
                 foc = self.mesh.topology.faces_of_cells[ci]
+                x = self.face_x[foc]
+                y = self.face_y[foc]
+                z = self.face_z[foc]
                 mask = foc != faces[:, np.newaxis]
                 fi = foc[mask].reshape(foc.shape[0], foc.shape[1] - 1)
                 normalsS = self.mesh.geometry.normals[faces]
                 dS = linalg.norm(normalsS, axis=1)
                 normalsS = normalsS/dS[:,np.newaxis]
                 nx, ny, nz = normalsS.T
-                x, y, z = self.mesh.geometry.face_centers[faces].T
+                # x, y, z = self.mesh.geometry.face_centers[faces].T
                 try:
                     b[faces] = f[color](x, y, z, nx, ny, nz)
                 except:
@@ -231,7 +296,10 @@ class CR1(p1general.P1general):
             nx, ny, nz = normalsS.T
             ci = self.mesh.topology.cells_of_faces[faces][:, 0]
             foc = self.mesh.topology.faces_of_cells[ci]
-            x, y, z = self.mesh.geometry.face_centers[foc].T
+            x = self.face_x[foc]
+            y = self.face_y[foc]
+            z = self.face_z[foc]
+            # x, y, z = self.mesh.geometry.face_centers[foc].T
             nx, ny, nz = normalsS.T
             import inspect
             # print(f"{len(inspect.signature(f[color]).parameters)=}")
@@ -242,7 +310,7 @@ class CR1(p1general.P1general):
                 ff = f[color](x, y, z, nx, ny, nz)
             else:
                 ff = np.vectorize(f[color])(x, y, z)
-            np.put(b, foc, ff.T)
+            b[foc] = ff
         return b
     # matrices
     def masslocal(self):
@@ -312,67 +380,82 @@ class CR1(p1general.P1general):
                 mat = np.append(mat, np.einsum('n,kl->nkl', dS, massloc).ravel())
         # print(f"{mat=}")
         return sparse.coo_matrix((mat, (rows, cols)), shape=(nfaces, nfaces)).tocsr()
+
     def massDotBoundary(self, b=None, f=None, colors=None, coeff=1, lumped=False):
-        #TODO CR1 boundary integrals: can do at ones since last index in faces_of_cells is the bdry side:
-        # assert np.all(faces == foc[:,-1])
-        if colors is None: colors = self.mesh.labels.boundary.keys()
+        if colors is None:
+            colors = self.mesh.labels.boundary.keys()
+
+        if f is None:
+            f = np.ones(self.mesh.nfaces)
+        elif np.isscalar(f):
+            f = np.full(self.mesh.nfaces, f, dtype=float)
+        else:
+            f = np.asarray(f)
+            if f.shape[0] != self.mesh.nfaces:
+                raise ValueError(
+                    f"CR1 boundary data f must be scalar or have length nfaces: "
+                    f"{f.shape=}, {self.mesh.nfaces=}"
+                )
+
         massloc = barycentric.crbdryothers(self.mesh.dimension)
+
         if not isinstance(coeff, dict):
             faces = self.mesh.bdryFaces(colors)
             normalsS = self.mesh.geometry.normals[faces]
             dS = linalg.norm(normalsS, axis=1)
-            # print(f"{coeff.shape=} {dS.shape=} {self.mesh=}")
-            if isinstance(coeff, (int,float)): dS *= coeff
-            elif coeff.shape[0]==self.mesh.nfaces: dS *= coeff[faces]
-            else: dS *= coeff
-            if b is None: bsum = np.sum(dS*f[faces])
-            else: b[faces] += dS*f[faces]
+
+            if isinstance(coeff, (int, float)):
+                dS *= coeff
+            elif coeff.shape[0] == self.mesh.nfaces:
+                dS *= coeff[faces]
+            else:
+                dS *= coeff
+
+            if b is None:
+                bsum = np.sum(dS * f[faces])
+            else:
+                b[faces] += dS * f[faces]
+
+            if lumped:
+                return bsum if b is None else b
+
             ci = self.mesh.topology.cells_of_faces[faces][:, 0]
             foc = self.mesh.topology.faces_of_cells[ci]
-            mask = foc!=faces[:,np.newaxis]
-            fi = foc[mask].reshape(foc.shape[0],foc.shape[1]-1)
-            r = np.einsum('n,kl,nl->nk', dS, massloc, f[fi])
-            if b is None: return bsum+np.sum(r)
-            # print(f"{np.linalg.norm(f[fi])=}")
+            mask = foc != faces[:, np.newaxis]
+            fi = foc[mask].reshape(foc.shape[0], foc.shape[1] - 1)
+
+            r = np.einsum("n,kl,nl->nk", dS, massloc, f[fi])
+
+            if b is None:
+                return bsum + np.sum(r)
+
             np.add.at(b, fi, r)
             return b
-        assert(isinstance(coeff, dict))
-        for color in colors:
-            faces = self.mesh.labels.boundary[color]
-            normalsS = self.mesh.geometry.normals[faces]
-            dS = linalg.norm(normalsS, axis=1)
-            dS *= coeff[color]
-            b[faces] += dS*f[faces]
-            if lumped: continue
-            ci = self.mesh.topology.cells_of_faces[faces][:, 0]
-            foc = self.mesh.topology.faces_of_cells[ci]
-            mask = foc!=faces[:,np.newaxis]
-            fi = foc[mask].reshape(foc.shape[0],foc.shape[1]-1)
-            r = np.einsum('n,kl,nl->nk', dS, massloc, f[fi])
-            # print(f"{np.linalg.norm(f[fi])=}")
-            np.add.at(b, fi, r)
-        return b
     def computeMatrixJump(self, betart, mode='primal', monotone=False):
         dim, dV, nfaces, ndofs = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.nfaces, self.nunknowns()
         nloc, dofspercell = self.nlocal(), self.dofspercell()
-        if not hasattr(self.mesh,'innerfaces'): self.mesh.construct_inner_faces()
-        innerfaces = self.mesh.topology.inner_faces
-        ci0 = self.mesh.topology.cells_of_inner_faces[:,0]
-        ci1 = self.mesh.topology.cells_of_inner_faces[:,1]
+
+        cells_of_faces = self.mesh.topology.cells_of_faces
+        innerfaces = np.flatnonzero(cells_of_faces[:, 1] >= 0)
+
+        ci0 = cells_of_faces[innerfaces, 0]
+        ci1 = cells_of_faces[innerfaces, 1]
+
         normalsS = self.mesh.geometry.normals[innerfaces]
         dS = linalg.norm(normalsS, axis=1)
-        faces = self.mesh.topology.faces[self.mesh.topology.inner_faces]
-        # ind0 = npext.positionin(faces, self.mesh.topology.cells[ci0])
-        # ind1 = npext.positionin(faces, self.mesh.topology.cells[ci1])
-        # fi0 = np.take_along_axis(self.mesh.topology.faces_of_cells[ci0], ind0, axis=1)
-        # fi1 = np.take_along_axis(self.mesh.topology.faces_of_cells[ci1], ind1, axis=1)
-        fi0, fi1 = self.mesh.topology.faces_of_cellsNotOnInnerFaces(ci0, ci1)
-        ifaces = np.arange(nfaces)[innerfaces]
+
+        fi0, fi1 = faces_of_cells_not_on_faces(
+            self.mesh.topology.faces_of_cells,
+            ci0,
+            ci1,
+            innerfaces,
+        )
         A = sparse.coo_matrix((ndofs, ndofs))
         rows0 = np.repeat(fi0, nloc-1).ravel()
         cols0 = np.tile(fi0,nloc-1).ravel()
         rows1 = np.repeat(fi1, nloc-1).ravel()
         cols1 = np.tile(fi1,nloc-1).ravel()
+
         massloc = barycentric.crbdryothers(self.mesh.dimension)
         if mode == 'primal':
             mat = np.einsum('n,kl->nkl', np.minimum(betart[innerfaces], 0) * dS, massloc).ravel()
@@ -396,27 +479,21 @@ class CR1(p1general.P1general):
             raise ValueError(f"unknown {mode=}")
         return A
     def computeFormJump(self, du, u, betart, mode='primal'):
-        dim, dV, nfaces, ndofs = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.nfaces, self.nunknowns()
-        nloc, dofspercell = self.nlocal(), self.dofspercell()
-        if not hasattr(self.mesh,'innerfaces'): self.mesh.construct_inner_faces()
-        innerfaces = self.mesh.topology.inner_faces
-        ci0 = self.mesh.topology.cells_of_inner_faces[:,0]
-        ci1 = self.mesh.topology.cells_of_inner_faces[:,1]
+        cells_of_faces = self.mesh.topology.cells_of_faces
+        innerfaces = np.flatnonzero(cells_of_faces[:, 1] >= 0)
+
+        ci0 = cells_of_faces[innerfaces, 0]
+        ci1 = cells_of_faces[innerfaces, 1]
+
         normalsS = self.mesh.geometry.normals[innerfaces]
         dS = linalg.norm(normalsS, axis=1)
-        faces = self.mesh.topology.faces[self.mesh.topology.inner_faces]
-        # ind0 = npext.positionin(faces, self.mesh.topology.cells[ci0])
-        # ind1 = npext.positionin(faces, self.mesh.topology.cells[ci1])
-        # fi0 = np.take_along_axis(self.mesh.topology.faces_of_cells[ci0], ind0, axis=1)
-        # fi1 = np.take_along_axis(self.mesh.topology.faces_of_cells[ci1], ind1, axis=1)
-        fi0, fi1 = self.mesh.topology.faces_of_cellsNotOnInnerFaces(ci0, ci1)
-        # fi0, fi1 = self.mesh.topology.faces_of_cellsNotOnFaces(faces, ci0, ci1)
-        # ifaces = np.arange(nfaces)[innerfaces]
-        # A = sparse.coo_matrix((ndofs, ndofs))
-        # rows0 = np.repeat(fi0, nloc-1).ravel()
-        # cols0 = np.tile(fi0,nloc-1).ravel()
-        # rows1 = np.repeat(fi1, nloc-1).ravel()
-        # cols1 = np.tile(fi1,nloc-1).ravel()
+
+        fi0, fi1 = faces_of_cells_not_on_faces(
+            self.mesh.topology.faces_of_cells,
+            ci0,
+            ci1,
+            innerfaces,
+        )
         massloc = barycentric.crbdryothers(self.mesh.dimension)
         if mode == 'primal':
             mat = np.einsum('n,kl,nl->nk', np.minimum(betart[innerfaces], 0) * dS, massloc, u[fi1]-u[fi0])
@@ -466,16 +543,16 @@ class CR1(p1general.P1general):
         return b
     # postprocess
     def computeErrorL2Cell(self, solexact, uh):
-        xc, yc, zc = self.mesh.geometry.cell_centers.T
+        xc, yc, zc = self.cell_x, self.cell_y, self.cell_z
         ec = solexact(xc, yc, zc) - np.mean(uh[self.mesh.topology.faces_of_cells], axis=1)
         return np.sqrt(np.sum(ec**2* self.mesh.geometry.cell_volumes)), ec
     def computeErrorL2(self, solexact, uh):
-        x, y, z = self.mesh.geometry.face_centers.T
+        x, y, z = self._xyz_from_points(self.mesh.geometry.face_centers)
         en = solexact(x, y, z) - uh
         Men = np.zeros_like(en)
         return np.sqrt( np.dot(en, self.massDot(Men,en)) ), en
     def computeErrorFluxL2(self, solexact, uh, diffcell=None):
-        xc, yc, zc = self.mesh.geometry.cell_centers.T
+        xc, yc, zc = self.cell_x, self.cell_y, self.cell_z
         graduh = np.einsum('nij,ni->nj', self.cellgrads, uh[self.mesh.topology.faces_of_cells])
         errv = 0
         for i in range(self.mesh.dimension):
@@ -517,6 +594,131 @@ class CR1(p1general.P1general):
                 flux[i] = self.comuteFluxOnRobin(u, faces, dS, bdrycond.fct[color], bdrycond.param[color])
         return flux
 
+    def build_scalar_prolongation_to_refined_mesh(self, info):
+        return mesh_transfer.cr1_prolongation(info)
+
+    def computeEstimator(self, u, rhs_cell=None, diffcell=None):
+        """
+        CR1 residual estimator for scalar diffusion:
+            eta_K^2 = h_K^2 |K| f_K^2
+                    + sum_{F subset dK interior} 0.5 * h_F * |F| * [k grad u . n]^2
+
+        Returns
+        -------
+        eta : float
+        eta2 : (ncells,) ndarray
+            squared local indicators
+        """
+        import numpy as np
+
+        mesh = self.mesh
+        points = mesh.geometry.points[:, :2]
+        cells = mesh.topology.cells
+        faces = mesh.topology.faces
+        faces_of_cells = mesh.topology.faces_of_cells
+        cells_of_faces = mesh.topology.cells_of_faces
+
+        u = np.asarray(u, dtype=float).reshape(-1)
+
+        ncells = cells.shape[0]
+        eta2 = np.zeros(ncells, dtype=float)
+
+        if rhs_cell is None:
+            rhs_cell = np.zeros(ncells, dtype=float)
+        else:
+            rhs_cell = np.asarray(rhs_cell, dtype=float).reshape(-1)
+
+        if diffcell is None:
+            diffcell = np.ones(ncells, dtype=float)
+        else:
+            diffcell = np.asarray(diffcell)
+
+        # ---- cell gradients of CR function
+        gradu = np.zeros((ncells, 2), dtype=float)
+
+        for k, tri in enumerate(cells):
+            p = points[tri]
+
+            B = np.column_stack((p[1] - p[0], p[2] - p[0]))
+            invB = np.linalg.inv(B)
+
+            grad_lam = np.empty((3, 2), dtype=float)
+            grad_lam[1] = invB[0]
+            grad_lam[2] = invB[1]
+            grad_lam[0] = -grad_lam[1] - grad_lam[2]
+
+            # CR basis attached to edge opposite vertex i:
+            # phi_i = 1 - 2 lambda_i, hence grad phi_i = -2 grad lambda_i
+            for iloc in range(3):
+                other = [j for j in range(3) if j != iloc]
+                a = int(tri[other[0]])
+                b = int(tri[other[1]])
+                e = (a, b) if a < b else (b, a)
+
+                gf = None
+                for cand in faces_of_cells[k]:
+                    fa, fb = map(int, faces[cand])
+                    ec = (fa, fb) if fa < fb else (fb, fa)
+                    if ec == e:
+                        gf = int(cand)
+                        break
+
+                if gf is None:
+                    raise RuntimeError("Could not match local CR face dof to opposite edge")
+
+                gradu[k] += u[gf] * (-2.0 * grad_lam[iloc])
+
+        # ---- cell residual term: P1/CR1 has zero Laplacian cellwise
+        vols = mesh.geometry.cell_volumes
+        for k, tri in enumerate(cells):
+            p = points[tri]
+            hK = max(
+                np.linalg.norm(p[1] - p[0]),
+                np.linalg.norm(p[2] - p[1]),
+                np.linalg.norm(p[0] - p[2]),
+            )
+            eta2[k] += hK ** 2 * vols[k] * rhs_cell[k] ** 2
+
+        # ---- interior flux jumps
+        for f, adj in enumerate(cells_of_faces):
+            k0, k1 = map(int, adj)
+            if k0 < 0 or k1 < 0:
+                continue
+
+            a, b = map(int, faces[f])
+            xa, xb = points[a], points[b]
+            t = xb - xa
+            hF = np.linalg.norm(t)
+            if hF == 0.0:
+                continue
+
+            n = np.array([t[1], -t[0]]) / hF
+
+            q0 = diffcell[k0] * gradu[k0]
+            q1 = diffcell[k1] * gradu[k1]
+
+            jump = np.dot(q0 - q1, n)
+
+            contrib = 0.5 * hF * hF * jump ** 2
+            eta2[k0] += 0.5 * contrib
+            eta2[k1] += 0.5 * contrib
+
+        eta = float(np.sqrt(np.sum(eta2)))
+        return eta, eta2
+
+    def to_p1(self, uface):
+        npoints = self.mesh.geometry.points.shape[0]
+
+        vals = np.zeros(npoints)
+        cnt = np.zeros(npoints)
+
+        for f, (a, b) in enumerate(self.mesh.topology.faces):
+            vals[a] += uface[f]
+            vals[b] += uface[f]
+            cnt[a] += 1
+            cnt[b] += 1
+
+        return vals / np.maximum(cnt, 1)
 # ------------------------------------- #
 if __name__ == '__main__':
     from FEM2D.meshes_new import testmeshes

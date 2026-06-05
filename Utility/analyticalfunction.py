@@ -128,7 +128,7 @@ class AnalyticalFunction:
         return val
 
 
-def analytical_solution(function: str, dim: int = 2, ncomp: int = 1, random: bool = False):
+def analytical_solution(function, dim: int = 2, ncomp: int = 1, random: bool = False):
     """
     Build simple manufactured scalar/vector analytical functions.
 
@@ -144,6 +144,18 @@ def analytical_solution(function: str, dim: int = 2, ncomp: int = 1, random: boo
     random:
         Whether to use random coefficients for generated functions.
     """
+
+    presets = {"Constant", "Linear", "Quadratic", "Sinus"}
+
+    # Vector specified as list of component specifications.
+    if isinstance(function, (list, tuple)):
+        if len(function) != ncomp:
+            raise ValueError(f"{len(function)=} != {ncomp=}")
+
+        return [
+            analytical_solution(function[c], dim=dim, ncomp=1, random=random)
+            for c in range(ncomp)
+        ]
     if dim not in (1, 2, 3):
         raise ValueError(f"dim must be 1, 2, or 3, got {dim}")
 

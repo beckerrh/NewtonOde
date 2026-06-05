@@ -7,7 +7,7 @@ Created on Sun Dec  4 18:14:29 2016
 import numpy as np
 import scipy.linalg as linalg
 import scipy.sparse as sparse
-from . import barycentric, p1general, data
+from . import barycentric, p1general, data, mesh_transfer
 
 #=================================================================#
 class P1(p1general.P1general):
@@ -27,7 +27,7 @@ class P1(p1general.P1general):
     def tonode(self, u): return u
     #  bc
     def prepareBoundary(self, colorsdir, colorsflux=[]):
-        bdrydata = FEM2D.fem.data.BdryData()
+        bdrydata = data.BdryData()
         bdrydata.nodesdir={}
         bdrydata.nodedirall = np.empty(shape=(0), dtype=self.mesh.topology.faces.dtype)
         for color in colorsdir:
@@ -117,7 +117,7 @@ class P1(p1general.P1general):
         u = udir[nodes].mean(axis=1)
         mat = np.einsum('f,fk,fik->fi', coeff*u*diffcoff[cells], normalsS, cellgrads)
         np.add.at(b, simp, -mat)
-    def computeFormNitscheDiffusion(self, nitsche_param, du, u, diffcoff, colorsdir):
+    def computeFormNitscheDiffusion(self, nitsche_param, du, u, diffcoff, colorsdir, lumped=False):
         assert u.shape[0]==self.mesh.nnodes
         dim  = self.mesh.dimension
         massloc = tools.barycentric.tensor(d=dim - 1, k=2)
@@ -219,7 +219,7 @@ cells]
         dim, dV, nnodes = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.nnodes
         if lumped:
             mass = coeff/(dim+1)*dV.repeat(dim+1)
-            rows = self.mesh.cells.ravel()
+            rows = self.mesh.topology.cells.ravel()
             return sparse.coo_matrix((mass, (rows, rows)), shape=(nnodes, nnodes)).tocsr()
         massloc = self.masslocal()
         mass = np.einsum('n,kl->nkl', coeff*dV, massloc).ravel()
@@ -256,7 +256,7 @@ cells]
         return tools.checkmmatrix.diffusionForMMatrix(A)
     def computeMatrixTransportUpwindSides(self, data):
         nnodes, nfaces, ncells, dim, dV = self.mesh.nnodes, self.mesh.nfaces, self.mesh.ncells, self.mesh.dimension, self.mesh.geometry.cell_volumes
-        normalsS, cof, simp = self.mesh.geometry.normals, self.mesh.topology.cells_of_faces, self.mesh.cells
+        normalsS, cof, simp = self.mesh.geometry.normals, self.mesh.topology.cells_of_faces, self.mesh.topology.cells
         dbS = linalg.norm(normalsS, axis=1)*data.betart/dim/(dim+1)
         innerfaces = self.mesh.topology.inner_faces
         infaces = np.arange(nfaces)[innerfaces]
@@ -286,7 +286,7 @@ cells]
         if method=='upwsides': return self.computeMatrixTransportUpwindSides(data)
         self.masslumped = self.computeMassMatrix(coeff=1, lumped=True)
         beta, mus, cells, deltas = data.beta, data.md.mus, data.md.cells, data.md.deltas
-        nnodes, simp= self.mesh.nnodes, self.mesh.cells
+        nnodes, simp= self.mesh.nnodes, self.mesh.topology.cells
         m = data.md.mask()
         if hasattr(data.md,'cells2'):
             m2 =  data.md.mask2()
@@ -361,19 +361,19 @@ cells]
         return du
     def massDotCell(self, b, f, coeff=1):
         assert f.shape[0] == self.mesh.ncells
-        dimension, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.geometry.cell_volumes
+        dimension, simplices, dV = self.mesh.dimension, self.mesh.topology.cells, self.mesh.geometry.cell_volumes
         massloc = 1/(dimension+1)
         np.add.at(b, simplices, (massloc*coeff*dV*f)[:, np.newaxis])
         return b
     def massDot(self, b, f, coeff=1):
-        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.geometry.cell_volumes
-        massloc = tools.barycentric.tensor(d=dim, k=2)
+        dim, simplices, dV = self.mesh.dimension, self.mesh.topology.cells, self.mesh.geometry.cell_volumes
+        massloc = barycentric.tensor(d=dim, k=2)
         r = np.einsum('n,kl,nl->nk', coeff * dV, massloc, f[simplices])
         np.add.at(b, simplices, r)
         return b
     def massDotSupg(self, b, f, data, coeff=1):
         if self.params_str['convmethod'][:4] != 'supg': return
-        dim, simplices, dV = self.mesh.dimension, self.mesh.cells, self.mesh.geometry.cell_volumes
+        dim, simplices, dV = self.mesh.dimension, self.mesh.topology.cells, self.mesh.geometry.cell_volumes
         r = np.einsum('n,nk,n->nk', coeff*dV, data.md.mus-1/(dim+1), f[simplices].mean(axis=1))
         np.add.at(b, simplices, r)
         return b
@@ -465,21 +465,25 @@ cells].T, bC)
         b += mass*help
         return b
     # postprocess
-    def computeErrorL2Cell(self, solexact, uh):
-        xc, yc, zc = self.mesh.geometry.cell_centers.T
-        ec = solexact(xc, yc, zc) - np.mean(uh[self.mesh.topology.cells], axis=1)
-        return np.sqrt(np.sum(ec**2* self.mesh.geometry.cell_volumes)), ec
+    def to_cell(self, u):
+        return np.mean(u[self.mesh.topology.cells], axis=1)
+    def computeErrorL2Cell(self, solexact, u):
+        x, y, z = self._xyz_from_points(self.mesh.geometry.cell_centers)
+        uh = self.to_cell(u)
+        ue = solexact(x, y, z)
+        ec = self.mesh.geometry.cell_volumes * (uh - ue) ** 2
+        return np.sqrt(ec.sum()), ec
     def computeErrorL2(self, solexact, uh):
         x, y, z = self.mesh.geometry.points.T
         en = solexact(x, y, z) - uh
         Men = np.zeros_like(en)
         return np.sqrt( np.dot(en, self.massDot(Men,en)) ), en
     def computeErrorFluxL2(self, solexact, uh, diffcell=None):
-        xc, yc, zc = self.mesh.geometry.cell_centers.T
+        x, y, z = self._xyz_from_points(self.mesh.geometry.cell_centers)
         graduh = np.einsum('nij,ni->nj', self.cellgrads, uh[self.mesh.topology.cells])
         errv = 0
         for i in range(self.mesh.dimension):
-            solxi = solexact.d(i, xc, yc, zc)
+            solxi = solexact.d(i, x, y, z)
             if diffcell is None: errv += np.sum((solxi - graduh[:, i]) ** 2 * self.mesh.geometry.cell_volumes)
             else: errv += np.sum( diffcell*(solxi-graduh[:,i])**2* self.mesh.geometry.cell_volumes)
         return np.sqrt(errv)
@@ -552,7 +556,7 @@ cells].T, bC)
 cells]],axis=1)*self.mesh.geometry.cell_volumes[cells])
         return up
 
-    def computeEstimatorJumpP1(self, uh, rhs_cell, diffcell=None):
+    def computeEstimator(self, uh, rhs_cell, diffcell=None):
         """
         Residual jump estimator for P1:
             eta_K^2 = h_K^2 ||f||_K^2
@@ -597,6 +601,10 @@ cells]],axis=1)*self.mesh.geometry.cell_volumes[cells])
         np.add.at(eta2, c1, face_contrib)
 
         return np.sqrt(np.sum(eta2)), eta2
+
+    def build_scalar_prolongation_to_refined_mesh(self, info):
+        return mesh_transfer.p1_prolongation(info)
+
 
 # ------------------------------------- #
 if __name__ == '__main__':

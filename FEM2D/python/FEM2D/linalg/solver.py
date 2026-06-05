@@ -1,8 +1,18 @@
 import numpy as np
 import Utility
+from .fem_vector import FemVector
 
 #=================================================================#
-class IterativeSolver:
+class LinearSolverBase:
+    def as_flat_vector(self, v):
+        if v is None:
+            return None
+        if isinstance(v, FemVector):
+            return v.flatten()
+        return np.asarray(v)
+
+#=================================================================#
+class IterativeSolver(LinearSolverBase):
     def __repr__(self):
         return f"{self.method}_{self.maxiter}_{self.rtol}"
 
@@ -49,15 +59,17 @@ class IterativeSolver:
         self.niter = 0
         self.residuals.clear()
 
-        bsolve = b
+        bsolve = self.as_flat_vector(b)
+        x0solve = self.as_flat_vector(x0)
+
         if A is not None and self.scale and hasattr(A, "scale_matrix"):
-            bsolve = b.copy()
+            bsolve = bsolve.copy()
             A.scale_vec(bsolve)
 
         sol = self._solve_impl(
             A=A,
             b=bsolve,
-            x0=x0,
+            x0=x0solve,
             maxiter=maxiter,
             rtol=rtol,
             atol=atol,

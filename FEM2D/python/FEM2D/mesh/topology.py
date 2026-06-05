@@ -139,24 +139,22 @@ def construct_faces_from_cells_python(mesh, build_edge2face=True):
 # ================================================================ #
 def construct_faces_from_cells_cpp(mesh, build_edge2face=True):
     r = backend.construct_faces_from_cells(
-        np.asarray(mesh.topology.cells, dtype=np.int32)
+        np.asarray(mesh.topology.cells, dtype=np.int64),
+        build_edge2face,
     )
 
-    faces = np.asarray(r["faces"], dtype=np.int64)
-    faces_of_cells = np.asarray(r["faces_of_cells"], dtype=np.int64)
-    cells_of_faces = np.asarray(r["cells_of_faces"], dtype=np.int64)
-
-    mesh.topology.faces = faces
-    mesh.topology.faces_of_cells = faces_of_cells
-    mesh.topology.cells_of_faces = cells_of_faces
-    mesh.nfaces = faces.shape[0]
+    mesh.topology.faces = r["faces"]
+    mesh.topology.faces_of_cells = r["faces_of_cells"]
+    mesh.topology.cells_of_faces = r["cells_of_faces"]
+    mesh.nfaces = mesh.topology.faces.shape[0]
 
     if build_edge2face:
-        mesh.edge2face = {
-            (int(a), int(b)): int(i)
-            for i, (a, b) in enumerate(faces)
-        }
+        mesh.edge2face = r["edge2face"]
     else:
         mesh.edge2face = None
 
-    return faces, faces_of_cells, cells_of_faces
+    return (
+        mesh.topology.faces,
+        mesh.topology.faces_of_cells,
+        mesh.topology.cells_of_faces,
+    )

@@ -38,7 +38,16 @@ def plot_solutions_single(ax, data):
                 ax.loglog(xp, v, label=k, **kwp)
             else:
                 ax.plot(xp, v, label=k, **kwp)
-    if not no_legend: ax.legend()
+
+    # if not no_legend: ax.legend()
+    legend_outside = data.pop('legend_outside', False)
+
+    if not no_legend:
+        if legend_outside:
+            ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5))
+        else:
+            ax.legend()
+
     if xlabel: ax.set_xlabel(xlabel)
     if ylabel: ax.set_ylabel(ylabel)
     ax.grid(True)
@@ -47,7 +56,10 @@ def plot_solutions_single(ax, data):
 #==================================================================
 def plot_solutions(plot_dicts, title=None):
     n_plots = len(plot_dicts)
-    fig, axes = plt.subplots(nrows=n_plots, ncols=1, figsize=(8, 8))
+    # fig, axes = plt.subplots(nrows=n_plots, ncols=1, figsize=(8, 8))
+    figsize = (10, max(3, 3 * n_plots))
+    fig, axes = plt.subplots(nrows=n_plots, ncols=1, figsize=figsize)
+
     if title: fig.suptitle(title)
     if not isinstance(axes, np.ndarray): axes = [axes]
     for ax, (k,v) in zip(axes, plot_dicts.items()):
@@ -57,7 +69,7 @@ def plot_solutions(plot_dicts, title=None):
             plot_solutions_single(ax, v)
         except Exception as e:
             raise KeyError(f"problem in key {k}") from e
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.tight_layout(rect=[0, 0, 0.82, 0.95])
 
 #==================================================================
 def compress_repeated_x(x, y, mode="last", ignore_first=0):
@@ -77,7 +89,9 @@ def compress_repeated_x(x, y, mode="last", ignore_first=0):
             raise ValueError(f"unknown mode {mode}")
 
     return xu, yu
-def plot_error_curves(plot_dicts, rate_ignore=0, fixed_order=None):
+
+#==================================================================
+def plot_error_curves(plot_dicts, rate_ignore=0, fixed_order=None, separate=False):
     import copy
     plot_dicts = copy.deepcopy(plot_dicts)
     for k,v in list(plot_dicts.items()):
@@ -107,11 +121,16 @@ def plot_error_curves(plot_dicts, rate_ignore=0, fixed_order=None):
     # print(f"{plot_dicts=}")
     for k in plot_dicts.keys():
         plot_dicts[k]['scale'] = 'loglog'
+        plot_dicts[k]['legend_outside'] = True
         if isinstance(plot_dicts[k]['x'], list):
-            dl = [x  for _ in range(2) for x in plot_dicts[k]['x']]
+            dl = [x for _ in range(2) for x in plot_dicts[k]['x']]
             plot_dicts[k]['x'] = dl
 
-    plot_solutions(plot_dicts)
+    if separate:
+        for k, v in plot_dicts.items():
+            plot_solutions({k: v})
+    else:
+        plot_solutions(plot_dicts)
 
 #==================================================================
 def add_mesh1d(plot_dict, mesh):

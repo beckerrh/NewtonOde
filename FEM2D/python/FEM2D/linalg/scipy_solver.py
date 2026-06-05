@@ -1,6 +1,6 @@
 import scipy.sparse.linalg as splinalg
 
-from .solver import IterativeSolver
+from .solver import IterativeSolver, LinearSolverBase
 
 
 scipysolvers = [
@@ -21,7 +21,7 @@ pyamgsolvers = [
 othersolvers = ["idr"]
 
 #=================================================================#
-class ScipySpSolve:
+class ScipySpSolve(LinearSolverBase):
     def __init__(self, **kwargs):
         self.matrix = kwargs.pop("matrix", None)
         self.method = "spsolve"
@@ -33,6 +33,8 @@ class ScipySpSolve:
 
         if hasattr(A, "to_single_matrix"):
             A = A.to_single_matrix()
+
+        b = self.as_flat_vector(b)
 
         return splinalg.spsolve(A, b)
 

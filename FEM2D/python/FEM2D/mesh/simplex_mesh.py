@@ -6,6 +6,8 @@ from . import topology, geometry
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 
+from FEM2D.mesh.backend import backend
+
 @dataclass
 class MeshLabels:
     boundary: dict = field(default_factory=dict)
@@ -29,6 +31,7 @@ class MeshGeometry:
     face_centers: np.ndarray | None = None
     cell_volumes: np.ndarray | None = None
     normals: np.ndarray | None = None
+    boundary_projector = None
 
 class SimplexMesh:
     """
@@ -86,36 +89,87 @@ class SimplexMesh:
             marked,
             debug=debug,
             timer=timer,
+            backend_name="cpp"
         )
 
     def construct_inner_faces(self):
         from .topology import construct_inner_faces
         construct_inner_faces(self)
 
-    def finalize_after_topology_change(self, timer):
+    def finalize_after_topology_change(
+            self,
+            timer=None,
+            backend_name="cpp",
+    ):
         self.geometry.points = np.asarray(self.geometry.points)
         self.topology.cells = np.asarray(self.topology.cells, dtype=int)
         self.nnodes = self.geometry.points.shape[0]
         self.ncells = self.topology.cells.shape[0]
         with timer("rebuild") if timer else nullcontext():
-            self._rebuild(timer=timer)
+            self._rebuild(
+                timer=timer,
+                backend_name=backend_name,
+            )
         if hasattr(self, "cell_markers"):
             with timer("celllabels") if timer else nullcontext():
-                cell_labels = {}
-                for icell, label in enumerate(self.cell_markers):
-                    cell_labels.setdefault(int(label), []).append(icell)
-                self.labels.cell = {
-                    label: np.asarray(ids, dtype=int)
-                    for label, ids in cell_labels.items()
-                }
-    def _rebuild(self, timer=None):
+                self.labels.cell = self._cell_labels_from_markers(self.cell_markers)
+
+    def _cell_labels_from_markers(self, cell_markers):
+        markers = np.asarray(cell_markers, dtype=np.int64)
+        order = np.argsort(markers)
+        markers_s = markers[order]
+
+        cuts = np.flatnonzero(np.r_[True, markers_s[1:] != markers_s[:-1]])
+
+        labels_cell = {}
+        for k, start in enumerate(cuts):
+            stop = cuts[k + 1] if k + 1 < len(cuts) else markers_s.size
+            label = int(markers_s[start])
+            labels_cell[label] = order[start:stop].astype(int, copy=False)
+
+        return labels_cell
+
+    def _rebuild(self, timer=None, backend_name="cpp"):
+
+        if backend_name == "cpp" and self.dimension == 2 and backend is not None:
+            with timer("rebuild_mesh_2d") if timer else nullcontext():
+                r = backend.rebuild_mesh_2d(
+                    self.geometry.points,
+                    self.topology.cells,
+                )
+
+            self.topology.faces = r["faces"]
+            self.topology.faces_of_cells = r["faces_of_cells"]
+            self.topology.cells_of_faces = r["cells_of_faces"]
+
+            self.geometry.cell_centers = r["cell_centers"]
+            self.geometry.face_centers = r["face_centers"]
+            self.geometry.normals = r["normals"]
+            self.geometry.cell_volumes = r["cell_volumes"]
+            self.sigma = r["sigma"]
+
+            self.ncells = self.topology.cells.shape[0]
+            self.nfaces = self.topology.faces.shape[0]
+
+            self.edge2face = None
+            with timer("construct_inner_faces") if timer else nullcontext():
+                topology.construct_inner_faces(self)
+
+            return
+
+        # fallback Python path
         with timer("construct_faces_from_cells") if timer else nullcontext():
-            topology.construct_faces_from_cells(self)
+            topology.construct_faces_from_cells(
+                self,
+                build_edge2face=build_edge2face,
+            )
+
         with timer("construct_centers_normals_volumes") if timer else nullcontext():
             self.ncells = self.topology.cells.shape[0]
             self.nfaces = self.topology.faces.shape[0]
             geometry.construct_centers(self)
             geometry.construct_normals_and_volumes(self)
+
         with timer("construct_inner_faces") if timer else nullcontext():
             topology.construct_inner_faces(self)
 

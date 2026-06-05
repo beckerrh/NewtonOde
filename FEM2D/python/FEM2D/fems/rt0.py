@@ -69,7 +69,7 @@ class RT0():
         return np.einsum('ni,ni,nij,ni -> nj', v[faces_of_cells], sigma2, pc[:,np.newaxis,:dim]-p[simp,:dim], dS2[faces_of_cells])
     def constructMass(self, massproj = 'standard', diffinvcell=None):
         ncells, nfaces, normals, sigma, faces_of_cells = self.mesh.ncells, self.mesh.nfaces, self.mesh.geometry.normals, self.mesh.sigma, self.mesh.topology.faces_of_cells
-        dim, dV, nloc, simp = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.dimension+1, self.mesh.cells
+        dim, dV, nloc, simp = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.dimension+1, self.mesh.topology.cells
         p, pc, pf = self.mesh.geometry.points, self.mesh.geometry.cell_centers, self.mesh.geometry.face_centers
         # massproj = self.params_str['massproj']
         if massproj == 'standard':
@@ -264,7 +264,7 @@ class RT0():
         mat =  (sigma*linalg.norm(normals[faces_of_cells],axis=2)).ravel()
         return  sparse.coo_matrix((mat, (rows, cols)), shape=(ncells, nfaces)).tocsr()
     def reconstruct(self, p, vc, diffinv):
-        nnodes, ncells, dim, simp = self.mesh.nnodes, self.mesh.ncells, self.mesh.dimension, self.mesh.cells
+        nnodes, ncells, dim, simp = self.mesh.nnodes, self.mesh.ncells, self.mesh.dimension, self.mesh.topology.cells
         if len(diffinv.shape) != 1:
             raise NotImplemented("only scalar diffusion the time being")
         # print(f"{simp=}")

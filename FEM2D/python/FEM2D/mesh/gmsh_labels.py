@@ -54,7 +54,10 @@ def parse_cell_sets(cell_sets, cells_dict, celltypes):
                     labind -= 1
                     ilabel = labind
                     name_to_id[label] = ilabel
-                    names.setdefault(celltype, {})[ilabel] = label
+                    # names.setdefault(celltype, {})[ilabel] = label
+                    if celltype not in names:
+                        names[celltype] = {}
+                    names[celltype][ilabel] = label
 
             cellsoflabel[celltype][ilabel] = np.asarray(info, dtype=np.int64).copy()
             sizes[celltype] += info.shape[0]

@@ -12,90 +12,7 @@ Mesh.Algorithm = 8   # Delquad
 
 
 # ================================================================ #
-def generate(geometry_builder, h=0.2, smooth=10, **kwargs):
-
-    with pygmsh.geo.Geometry() as geom:
-
-        geometry_builder(geom, h=h, **kwargs)
-        gmsh.option.setNumber("Mesh.Algorithm", 6)
-        gmsh.option.setNumber("Mesh.Smoothing", smooth)
-
-        mesh = geom.generate_mesh(
-            dim=2,
-            verbose=False,
-        )
-    return SimplexMesh.from_meshio(mesh)
-
-# ================================================================ #
-def unitline(h=0.5, a=0.0, b=1.0, use_pygmsh=False):
-    """
-    Simple 1D mesh on [a,b].
-    """
-
-    if use_pygmsh:
-
-        with pygmsh.geo.Geometry() as geom:
-            p0 = geom.add_point([a, 0, 0], mesh_size=h)
-            p1 = geom.add_point([b, 0, 0], mesh_size=h)
-
-            line = geom.add_line(p0, p1)
-
-            geom.add_physical(p0, label="10000")
-            geom.add_physical(p1, label="10001")
-            geom.add_physical(line, label="1000")
-
-            mesh = geom.generate_mesh()
-
-        return SimplexMesh(mesh)
-
-    # ------------------------------------------------------------ #
-    # Lightweight fake meshio-like object for fast testing
-    class Cell1D:
-        def __init__(self, celltype, data):
-            self.type = celltype
-            self.data = data
-
-    class Mesh1D:
-        def __init__(self, a=0, b=1, h=0.1):
-            N = int((b - a) / h + 1)
-
-            self.geometry.points = np.stack(
-                [
-                    np.linspace(a, b, N),
-                    np.zeros(N),
-                    np.zeros(N),
-                ],
-                axis=1,
-            )
-
-            linedata = np.stack(
-                [
-                    np.arange(0, N - 1),
-                    np.arange(1, N),
-                ],
-                axis=1,
-            )
-
-            vertexdata = np.array([[0], [N - 1]])
-
-            self.topology.cells = [
-                Cell1D("line", linedata),
-                Cell1D("vertex", vertexdata),
-            ]
-
-            self.topology.cells_dict = {c.type: c.data for c in self.topology.cells}
-
-            self.cell_sets = {
-                "10000": [None, np.array([0])],
-                "10001": [None, np.array([1])],
-                "1000": [np.arange(0, N - 1), None],
-            }
-
-    return SimplexMesh(Mesh1D(a, b, h))
-
-
-# ================================================================ #
-def add_unitsquare(geom, h=0.2, a=1.0):
+def add_unitsquare(geom, h=0.2, a=1.0, boundary_projectors=None):
     p = geom.add_rectangle(
         xmin=-a,
         xmax=a,
@@ -111,13 +28,9 @@ def add_unitsquare(geom, h=0.2, a=1.0):
         geom.add_physical(line, label=f"{1000 + i}")
 
 
-# ================================================================ #
-def unitsquare(h=0.2, a=1.0):
-    return generate(add_unitsquare, h=h, a=a)
-
 
 # ================================================================ #
-def add_unitcube(geom, h=0.5):
+def add_unitcube(geom, h=0.5, boundary_projectors=None):
     x, y, z = [-1, 1], [-1, 1], [-1, 1]
 
     p = geom.add_rectangle(
@@ -145,13 +58,9 @@ def add_unitcube(geom, h=0.5):
     geom.add_physical(vol, label="10")
 
 
-# ================================================================ #
-def unitcube(h=0.5):
-    return generate(add_unitcube, h=h)
-
 
 # ================================================================ #
-def add_backwardfacingstep(geom, h=0.5):
+def add_backwardfacingstep(geom, h=0.5, boundary_projectors=None):
     X = [
         [-1.0, 1.0],
         [-1.0, 0.0],
@@ -172,13 +81,9 @@ def add_backwardfacingstep(geom, h=0.5):
         geom.add_physical(line, label=f"{1000 + i}")
 
 
-# ================================================================ #
-def backwardfacingstep(h=0.5):
-    return generate(add_backwardfacingstep, h=h)
-
 
 # ================================================================ #
-def add_backwardfacingstep3d(geom, h=0.5):
+def add_backwardfacingstep3d(geom, h=0.5, boundary_projectors=None):
     X = [
         [-1.0, 1.0],
         [-1.0, 0.0],
@@ -209,13 +114,9 @@ def add_backwardfacingstep3d(geom, h=0.5):
     geom.add_physical(vol, label="10")
 
 
-# ================================================================ #
-def backwardfacingstep3d(h=0.5):
-    return generate(add_backwardfacingstep3d, h=h)
-
 
 # ================================================================ #
-def add_equilateral(geom, h):
+def add_equilateral(geom, h, boundary_projectors=None):
     a = 1.0
 
     X = [
@@ -232,7 +133,3 @@ def add_equilateral(geom, h):
     for i, line in enumerate(p.lines):
         geom.add_physical(line, label=1000 + i)
 
-
-# ================================================================ #
-def equilateral(h=0.2):
-    return generate(add_equilateral, h=h)

@@ -1,16 +1,28 @@
 import pygmsh
 from .problemdata import ProblemData
 from ..mesh import SimplexMesh
+from ..mesh.boundary_geometry import CircleProjector
+from Utility.analyticalfunction import  AnalyticalFunction, analytical_solution
 
 # ================================================================ #
 class Application:
     def __init__(self, **kwargs):
         self.h = kwargs.pop('h', 0.5)
-        self.exactsolution = kwargs.pop('exactsolution', None)
+        self.ncomps = kwargs.pop("ncomps", None)
+        self.exactsolution_spec = kwargs.pop('exactsolution', None)
+        self.exactsolution = None
+        if self.ncomps is None:
+            if isinstance(self.exactsolution_spec, (list, tuple)):
+                self.ncomps = [len(self.exactsolution_spec)]
+            else:
+                self.ncomps = [1]
         self.random_exactsolution = kwargs.pop('random_exactsolution', None)
-        self.generatePDforES = kwargs.pop('generatePDforES', None)
-        if self.generatePDforES is None and self.exactsolution:
-            self.generatePDforES = True
+
+        if self.exactsolution_spec is not None:
+            if not "dimension" in kwargs:
+                raise KeyError(f"Application: for exact_solution needs 'dimension'")
+            self.makeExactSolution(kwargs.pop("dimension", None))
+
         self.problemdata = ProblemData()
         self.defineProblemData(self.problemdata)
         # print(f"{self.problemdata=}")
@@ -20,35 +32,89 @@ class Application:
         if len(kwargs.keys()):
             raise ValueError(f"*** unused arguments {kwargs=}")
 
-    def defineGeometry(self, geom, h): raise ValueError(f"not written")
-    def createExactSolution(self, mesh, ncomps):
-        dim, ran = mesh.dimension, self.random_exactsolution
-        assert isinstance(ncomps, (list,tuple))
-        if isinstance(self.exactsolution, str): names=[self.exactsolution]
-        else: names = self.exactsolution
-        # print(f"***{ncomps=} {names=} {self.exactsolution=}")
-        assert len(ncomps) == len(names)
-        self.exactsolution = []
-        for i in range(len(ncomps)):
-            print(f"{i=} {names[i]=} {ncomps[i]=}")
-            self.exactsolution.append(analyticalSolution(names[i], dim, ncomps[i], ran))
-        return
-        # print(f"****** createExactSolution: {dim=} {ncomp=} {self.exactsolution=}")
-        # if isinstance(ncomp, (list,tuple)) or isinstance(self.exactsolution,(list,tuple)):
-        #     assert len(ncomp)==len(self.exactsolution)
-        #     es= []
-        #     for i in range(len(ncomp)):
-        #         es.append(analyticalSolution(self.exactsolution[i], dim, ncomp[i], ran))
-        #     self.exactsolution = es
-        # else:
-        #     if isinstance(self.exactsolution, str):
-        #         self.exactsolution = analyticalSolution(self.exactsolution, dim, ncomp, ran)
+    #----------------------------------------------------------------
+    def _normalize_exactsolution_blocks(self):
+        ex = self.exactsolution_spec
+        ncomps = self.ncomps
+
+        if ex is None:
+            return None
+
+        # ncomps=[2], exactsolution=["Quadratic", "Linear"]
+        # means one vector unknown with two scalar components.
+        if len(ncomps) == 1:
+            return [ex]
+
+        # ncomps=[2,1], exactsolution=[["u1", "u2"], "p"]
+        # means several unknown blocks.
+        if not isinstance(ex, (list, tuple)):
+            raise ValueError("For several unknown blocks, exactsolution must be a list/tuple")
+
+        if len(ex) != len(ncomps):
+            raise ValueError(f"{len(ex)=} != {len(ncomps)=}")
+
+        return list(ex)
+
+    #----------------------------------------------------------------
+    def makeExactSolution(self, dim):
+        if self.exactsolution is not None:
+            return
+        print(f"{dim=} {self.exactsolution_spec=}")
+        ran = self.random_exactsolution
+        ncomps = self.ncomps
+
+        blocks = self._normalize_exactsolution_blocks()
+        if blocks is None:
+            return
+
+        exact = []
+        for block, nc in zip(blocks, ncomps):
+            exact.append(analytical_solution(block, dim, nc, ran))
+
+        self.exactsolution = exact
+
+    #----------------------------------------------------------------
+    def add_circle(
+            self,
+            geom,
+            boundary_projectors,
+            *,
+            label,
+            center,
+            radius,
+            mesh_size,
+            num_sections=6,
+            make_surface=False,
+    ):
+        circle = geom.add_circle(
+            x0=center,
+            radius=radius,
+            mesh_size=mesh_size,
+            num_sections=num_sections,
+            make_surface=make_surface,
+        )
+
+        geom.add_physical(circle.curve_loop.curves, label=str(label))
+
+        proj = CircleProjector(center=center, radius=radius)
+
+        boundary_projectors[label] = proj
+        boundary_projectors[str(label)] = proj
+
+        return circle
+
     def createMesh(self, h=0.5):
-        if h is None: h = self.h
+        if h is None:
+            h = self.h
+        boundary_projectors = {}
         with pygmsh.geo.Geometry() as geom:
-            self.defineGeometry(geom, h)
-            mesh = geom.generate_mesh()
-        return SimplexMesh.from_meshio(mesh)
+            self.defineGeometry(geom, h, boundary_projectors=boundary_projectors)
+            meshio_mesh = geom.generate_mesh()
+        mesh = SimplexMesh.from_meshio(meshio_mesh)
+        if boundary_projectors:
+            from FEM2D.mesh.boundary_geometry import LabelBoundaryProjector
+            mesh.geometry.boundary_projector = LabelBoundaryProjector(boundary_projectors)
+        return mesh
     def defineProblemData(self, problemdata):
         pass
     def plot(self, mesh, data, **kwargs):

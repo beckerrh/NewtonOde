@@ -7,11 +7,6 @@ namespace py = pybind11;
 
 py::dict unique_edges(py::array_t<int> edges);
 
-py::dict build_midpoints(
-    py::array_t<double> points,
-    py::array_t<int> edges
-);
-
 py::dict refine_cells_nvb(
     py::array_t<int> cells,
     py::array_t<int> refedges,

@@ -3,6 +3,24 @@ import scipy, scipy.special
 import itertools as it
 
 # ------------------------------------- #
+def coords(points, simplex):
+    points = np.asarray(points)
+    simplex = np.asarray(simplex)
+
+    if points.ndim == 1:
+        points = points[None, :]
+
+    nsimplex_vertices = simplex.shape[0]
+    dim = nsimplex_vertices - 1
+
+    simplex = simplex[:, :dim]
+    points = points[:, :dim]
+
+    A = np.vstack((simplex.T, np.ones(nsimplex_vertices)))
+    B = np.vstack((points.T, np.ones(points.shape[0])))
+
+    return np.linalg.solve(A, B).T
+# ------------------------------------- #
 def tensor(d, k):
     A = np.ones(shape=k*[d+1])
     facd = np.prod(np.arange(d + 1, d + k + 1))
