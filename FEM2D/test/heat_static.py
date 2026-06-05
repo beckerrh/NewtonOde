@@ -4,8 +4,7 @@ import sys
 root = Path(__file__).resolve().parents[1] / "python"
 sys.path.insert(0, str(root))
 
-from FEM2D.models import Elliptic
-from FEM2D.models import Application
+from FEM2D.models import Model, EllipticDiscretization, Application
 
 from Utility import timer
 
@@ -26,7 +25,7 @@ class HeatExample(Application):
 
         problemdata.params.set_scal_cells("kheat", [100], 0.001)
         problemdata.params.set_scal_cells("kheat", [200], 10.0)
-        problemdata.params.fct_glob["convection"] = ["0", "0.002"]
+        problemdata.params.fct_glob["convection"] = ["0", "0.02"]
 
     def defineGeometry(self, geom, h, boundary_projectors):
         holes = []
@@ -66,42 +65,77 @@ class HeatExample(Application):
 
 
 #------------------------------------------------------------------------
-disc_params = {"dirichletmethod": "nitsche"}
+def linear_example():
+    linear_solvers=["pyamg", 'spsolve', "geommg"]
+    linear_solver_params={
+        "smoother": "ilu",
+        "smoother_kwargs": {
+            "drop_tol": 0.01,
+            "fill_factor": 1.1,
+            "permc_spec": "NATURAL",
+            "diag_pivot_thresh": 0.0,
+        },
+        "nu_pre": 2,
+        "nu_post": 2,
+        "gamma": 1.0,
+        "acceleration": "arnoldi",
+        "arnoldi_dim": 3,
+    }
+    heat = Model(
+        application=HeatExample(),
+        discretization=EllipticDiscretization,
+        fem="p1",
+        linear_solver="geommg",
+        linear_solver_params=linear_solver_params,
+    )
 
-linear_solvers=["pyamg", 'spsolve', "geommg"]
-linear_solver_params={
-    "smoother": "ilu",
-    "smoother_kwargs": {
-        "drop_tol": 0.01,
-        "fill_factor": 1.1,
-        "permc_spec": "NATURAL",
-        "diag_pivot_thresh": 0.0,
-    },
-    "nu_pre": 2,
-    "nu_post": 2,
-    "gamma": 1.0,
-    "acceleration": "arnoldi",
-    "arnoldi_dim": 3,
-}
-heat = Elliptic(
-    application=HeatExample(),
-    fem="p1",
-    linear_solver="geommg",
-    linear_solver_params=linear_solver_params,
-    disc_params=disc_params,
-)
+    mesh_timer = timer.Timer()
 
-mesh_timer = timer.Timer()
+    heat.afem_loop(
+        niter=7,
+        theta = 0.9,
+        plot_solution=True,
+        mesh_timer=mesh_timer,
+    )
 
-heat.afem_loop(
-    niter=7,
-    theta = 0.9,
-    plotting=False,
-    mesh_timer=mesh_timer,
-)
+    print(heat.timer.summary_by_leaf() + "\n")
+    print(mesh_timer.summary_by_leaf())
 
-print(heat.timer.summary_by_leaf() + "\n")
-print(mesh_timer.summary_by_leaf())
+    print([level.mesh.nnodes for level in heat.mesh_hierarchy.levels])
+    print([level.mesh.ncells for level in heat.mesh_hierarchy.levels])
 
-print([level.mesh.nnodes for level in heat.mesh_hierarchy.levels])
-print([level.mesh.ncells for level in heat.mesh_hierarchy.levels])
+
+#------------------------------------------------------------------
+def linear_example_by_newton():
+    from FEM2D.models.newton_driver import NewtonDriver
+    from Newton import newton, newtondata
+    heat = Model(
+        application=HeatExample(),
+        discretization=EllipticDiscretization,
+        fem="p1",
+        disc_params={"dirichletmethod":"nitsche"},
+    )
+
+
+    sdata = newtondata.StoppingParamaters(maxiter=50, rtol=1e-3, forcing_kappa=0.5)
+    x0 = heat.initial_guess()
+    newton = newton.Newton(
+        nd = NewtonDriver(heat),
+        verbose=2,
+        sdata=sdata,
+    )
+    xs, info, logger = newton.solve(x0)
+
+    if not info.success:
+        print(info.success,info.failure)
+    else:
+        print('---- time ---')
+        print(heat.timer.summary(),'\n')
+        # print(heat.B.timer.summary(),'\n')
+        # heat.plot_eta()
+        logger.print_history()
+
+
+
+#------------------------------------------------------------------
+linear_example_by_newton()

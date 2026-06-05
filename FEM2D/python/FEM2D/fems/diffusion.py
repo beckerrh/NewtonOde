@@ -1,4 +1,3 @@
-import numpy as np
 
 
 def normalize_diffusion(diff, ncells, ncomp=1, dim=2):

@@ -1,4 +1,6 @@
 import numpy as np
+from scipy.sparse import block_diag, bmat
+
 from types import SimpleNamespace
 
 from Utility.analyticalfunction import AnalyticalFunction
@@ -6,6 +8,7 @@ from .discretization_base import DiscretizationBase
 from ..fems import cr1, p1, rt0, mesh_transfer
 from ..fems import data as femdata
 from ..fems.diffusion import normalize_diffusion
+from ..fems.reaction import normalize_reaction
 from ..linalg.fem_vector import FemVector
 
 
@@ -29,8 +32,7 @@ class EllipticDiscretization(DiscretizationBase):
                           or 'convection' in self.problemdata.params.data.keys()\
                           or 'convection' in self.problemdata.params.fct_glob.keys()
 
-        if application.exactsolution is not None:
-            self.generatePoblemDataForAnalyticalSolution()
+
         if self.hasconvection:
             self.convectionmethod = disc_params.pop('convmethod', 'lps')
             if self.convectionmethod == 'lps':
@@ -49,6 +51,25 @@ class EllipticDiscretization(DiscretizationBase):
             ncomp=self.application.ncomps[0],
             dim=self.mesh.dimension,
         )
+
+        if "reaction" in self.problemdata.params.scal_glob:
+            reaction = self.problemdata.params.scal_glob["reaction"]
+        elif "reaction" in self.problemdata.params.scal_cells:
+            reaction = self.compute_cell_vector_from_params("reaction", self.problemdata.params)
+        else:
+            reaction = None
+        self.reaction = reaction
+        if reaction is None:
+            self.reactionkind = None
+            self.reactioncell = None
+        else:
+            self.reactionkind, self.reactioncell = normalize_reaction(
+                reaction,
+                self.mesh.ncells,
+                ncomp=self.ncomps[0],
+            )
+
+
         if self.hasconvection:
             self.convdata = femdata.ConvectionData()
             rt = rt0.RT0(mesh=self.mesh)
@@ -80,11 +101,16 @@ class EllipticDiscretization(DiscretizationBase):
             # print("colorsdir", colorsdir)
             if not set(colorsinflow).issubset(set(colorsdir)):
                 raise ValueError(f"Inflow boundaries need to be subset of Dirichlet boundaries {colorsinflow=} {colorsdir=}")
+
         colorsdirichlet = self.problemdata.bdrycond.colorsOfType("Dirichlet")
         colorsflux = self.problemdata.postproc.colorsOfType("bdry_nflux")
         if self.dirichletmethod != "nitsche":
             self.bdrydata = self.fem.prepareBoundary(colorsdirichlet, colorsflux)
         assert len(self.application.ncomps)==1
+
+        if application.exactsolution is not None:
+            self.generatePoblemDataForAnalyticalSolution()
+
         if len(kwargs.keys()):
             raise ValueError(f"*** unused arguments {kwargs=}")
         if len(disc_params.keys()):
@@ -122,62 +148,82 @@ class EllipticDiscretization(DiscretizationBase):
             return val.astype(float)
 
         return _solexactdir
+    # def defineRhsAnalyticalSolution(self, solexact_list):
+    #     solexact = solexact_list[0]
+    #     ncomp = self.ncomps[0]
+    #     dim = self.mesh.dimension
+    #     kheat = self.problemdata.params.scal_glob["kheat"]
+    #
+    #     def rhs(x, y, z):
+    #         z = np.zeros_like(x) if z is None else z
+    #         out = np.zeros((ncomp, x.size))
+    #
+    #         for icomp, ui in enumerate(solexact):
+    #             # diffusion: -k Δu_i
+    #             for d in range(dim):
+    #                 out[icomp] -= kheat * ui.dd(d, d, x, y, z)
+    #
+    #             # convection: beta · grad u_i
+    #             if self.hasconvection:
+    #                 for d in range(dim):
+    #                     out[icomp] += (
+    #                             self.convection_fct[d](x, y, z)
+    #                             * ui.d(d, x, y, z)
+    #                     )
+    #
+    #         return out
+    #
+    #     return rhs
     def defineRhsAnalyticalSolution(self, solexact_list):
+        solexact = solexact_list[0]  # tuple of component exact solutions
+        ncomp = self.ncomps[0]
+        dim = self.mesh.dimension
 
-        solexact = solexact_list[0]
+        if len(solexact) != ncomp:
+            raise ValueError(f"{len(solexact)=} != {ncomp=}")
 
-        def _scalar_rhs(ui, x, y, z, with_convection):
-            kheat = self.problemdata.params.scal_glob["kheat"]
+        if self.diffkind != "scalar":
+            raise NotImplementedError(
+                "Manufactured RHS currently supports only scalar constant diffusion"
+            )
 
-            rhs = np.zeros(x.shape)
+        kheat = self.problemdata.params.scal_glob["kheat"]
 
-            for i in range(self.mesh.dimension):
+        def rhs(x, y, z):
+            z = np.zeros_like(x) if z is None else z
+            out = np.zeros((ncomp, x.size))
 
-                if with_convection:
-                    beta = self.convection_fct
-                    rhs += beta[i](x, y, z) * ui.d(i, x, y, z)
+            for i, ui in enumerate(solexact):
+                # diffusion: -k Δu_i
+                for d in range(dim):
+                    out[i] -= kheat * ui.dd(d, d, x, y, z)
 
-                rhs -= kheat * ui.dd(i, i, x, y, z)
+                # convection: beta · grad u_i
+                if self.hasconvection:
+                    for d in range(dim):
+                        out[i] += (
+                                self.convection_fct[d](x, y, z)
+                                * ui.d(d, x, y, z)
+                        )
 
-            return rhs
+                # reaction: sum_j C_ij u_j
+                if getattr(self, "reactioncell", None) is not None:
+                    for j, uj in enumerate(solexact):
+                        cij = self.reaction_coeff_pointwise(i, j)
+                        # cij = self.reaction_coeff(i, j)
 
-        def _vector_rhs(x, y, z, with_convection):
+                        if np.isscalar(cij):
+                            if cij == 0:
+                                continue
+                            out[i] += cij * uj(x, y, z)
+                        else:
+                            raise NotImplementedError(
+                                "Manufactured RHS with cellwise reaction is not pointwise-defined"
+                            )
 
-            ncomp = self.application.ncomps[0]
+            return out
 
-            rhs = np.zeros((ncomp, x.size))
-
-            for icomp in range(ncomp):
-                rhs[icomp] = _scalar_rhs(
-                    solexact[icomp],
-                    x, y, z,
-                    with_convection,
-                )
-
-            return rhs
-
-        def _fctu(x, y, z):
-
-            # vector-valued unknown
-            if isinstance(solexact, (list, tuple)):
-                return _vector_rhs(x, y, z, True)
-
-            # scalar unknown
-            return _scalar_rhs(solexact, x, y, z, True)
-
-        def _fctu2(x, y, z):
-
-            # vector-valued unknown
-            if isinstance(solexact, (list, tuple)):
-                return _vector_rhs(x, y, z, False)
-
-            # scalar unknown
-            return _scalar_rhs(solexact, x, y, z, False)
-
-        if self.hasconvection:
-            return _fctu
-
-        return _fctu2
+        return rhs
     def defineNeumannAnalyticalSolution(self, problemdata, color, solexact):
         solexact = solexact[0]
 
@@ -204,7 +250,6 @@ class EllipticDiscretization(DiscretizationBase):
             return rhs
 
         return _fctrobin
-
     def generatePoblemDataForAnalyticalSolution(self):
 
         bdrycond = self.problemdata.bdrycond
@@ -302,63 +347,319 @@ class EllipticDiscretization(DiscretizationBase):
     def computeMassMatrix(self):
         lumped = self.disc_params.get('masslumped', False)
         return self.fem.computeMassMatrix(lumped=lumped)
+
     def computeForm(self, u, coeffmass=None):
-        if not hasattr(self, 'A'):
-            self.A = self.computeMatrix()
-        # du2 = self.A@u
-        du = np.zeros_like(u)
+        U = u.block("U")
+        ncomp = U.shape[0]
+
+        du = u.zeros_like()
+        DU = du.block("U")
+
         bdrycond = self.problemdata.bdrycond
         colorsrobin = bdrycond.colorsOfType("Robin")
         colorsdir = bdrycond.colorsOfType("Dirichlet")
-        self.fem.computeFormDiffusion(du, u, self.diffcell)
-        if self.hasconvection:
-            self.fem.computeFormTransportCellWise(du, u, self.convdata, type='centered')
-            if hasattr(self.fem, "computeFormJump"):
-                self.fem.computeFormJump(du, u, self.convdata.betart)
-            if self.convectionmethod == 'lps':
-                self.fem.computeFormLps(du, u, self.convdata.betart, lpsparam=self.lpsparam)
-        if coeffmass is not None:
-            self.fem.massDot(du, u, coeff=coeffmass)
-        self.fem.massDotBoundary(du, u, colorsrobin, bdrycond.param, lumped=True)
-        if self.dirichletmethod!="nitsche":
-            self.fem.vectorBoundaryStrongEqual(du, u, self.bdrydata)
-        else:
-            self.fem.computeFormNitscheDiffusion(self.nitscheparam, du, u, self.diffcell, colorsdir, lumped=self.nitsche_lumped)
-        # if not np.allclose(du,du2):
-        #     # f = (f"\n{du[self.bdrydata.facesdirall]}\n{du2[self.bdrydata.facesdirall]}")
-        #     raise ValueError(f"{np.linalg.norm(du-du2)}\n{du=}\n{du2=}")
-        return du
-    def computeMatrix(self, u=None, coeffmass=None):
-        bdrycond = self.problemdata.bdrycond
-        colorsrobin = bdrycond.colorsOfType("Robin")
-        colorsdir = bdrycond.colorsOfType("Dirichlet")
-        A = self.fem.computeMatrixDiffusion(self.diffcell)
-        A += self.fem.computeBdryMassMatrix(colorsrobin, bdrycond.param, lumped=True)
-        if self.hasconvection:
-            A += self.fem.computeMatrixTransportCellWise(self.convdata, type='centered')
-            if hasattr(self.fem, 'computeMatrixJump'):
-                A += self.fem.computeMatrixJump(self.convdata.betart)
-            if self.convectionmethod == 'lps':
-                A += self.fem.computeMatrixLps(self.convdata.betart, lpsparam=self.lpsparam)
-        if coeffmass is not None:
-            A += self.fem.computeMassMatrix(coeff=coeffmass)
-        if self.dirichletmethod != "nitsche":
-            A = self.fem.matrixBoundaryStrong(A, self.bdrydata)
-        else:
-            A += self.fem.computeMatrixNitscheDiffusion(
-                self.nitscheparam,
-                diffcoff=self.diffcell,
-                colors=colorsdir,
-                lumped=self.nitsche_lumped,
+
+        for icomp in range(ncomp):
+            ui = U[icomp]
+            dui = DU[icomp]
+            diff_i = self._scalar_component_diffusion(icomp)
+
+            self.fem.computeFormDiffusion(dui, ui, diff_i)
+
+            if self.hasconvection:
+                self.fem.computeFormTransportCellWise(
+                    dui,
+                    ui,
+                    self.convdata,
+                    type="centered",
+                )
+                if hasattr(self.fem, "computeFormJump"):
+                    self.fem.computeFormJump(dui, ui, self.convdata.betart)
+                if self.convectionmethod == "lps":
+                    self.fem.computeFormLps(
+                        dui,
+                        ui,
+                        self.convdata.betart,
+                        lpsparam=self.lpsparam,
+                    )
+
+            if coeffmass is not None:
+                self.fem.massDot(dui, ui, coeff=coeffmass)
+
+            self.fem.massDotBoundary(
+                dui,
+                ui,
+                colorsrobin,
+                bdrycond.param,
+                lumped=True,
             )
 
-        ncomp = self.application.ncomps[0]
-        if ncomp > 1:
-            from scipy.sparse import block_diag
-            A = block_diag([A] * ncomp, format="csr")
+            if self.dirichletmethod != "nitsche":
+                self.fem.vectorBoundaryStrongEqual(dui, ui, self.bdrydata)
+            else:
+                self.fem.computeFormNitscheDiffusion(
+                    self.nitscheparam,
+                    dui,
+                    ui,
+                    diff_i,
+                    colorsdir,
+                    lumped=self.nitsche_lumped,
+                )
 
-        return A
+        return du
+    def _repeat_scalar_matrix(self, A0):
+        ncomp = self.ncomps[0]
+        if ncomp == 1:
+            return A0
+        return block_diag([A0] * ncomp, format="csr")
 
+    def reaction_coeff_pointwise(self, i, j):
+        if getattr(self, "reaction", None) is None:
+            return 0.0
+
+        r = np.asarray(self.reaction, dtype=float)
+
+        if r.ndim == 0:
+            return float(r) if i == j else 0.0
+
+        if r.shape == (self.ncomps[0],):
+            return float(r[i]) if i == j else 0.0
+
+        if r.shape == (self.ncomps[0], self.ncomps[0]):
+            return float(r[i, j])
+
+        raise NotImplementedError(
+            "Manufactured RHS only supports constant scalar/diagonal/matrix reaction"
+        )
+    def reaction_coeff(self, i, j):
+        if getattr(self, "reactioncell", None) is None:
+            return 0.0
+
+        if self.reactionkind == "scalar":
+            return self.reactioncell if i == j else 0.0
+
+        if self.reactionkind == "diagonal":
+            return self.reactioncell[i] if i == j else 0.0
+
+        if self.reactionkind == "coupled":
+            return self.reactioncell[i, j]
+
+        raise ValueError(f"unknown {self.reactionkind=}")
+    def _scalar_component_diffusion(self, icomp):
+        if self.diffkind == "scalar":
+            return self.diffcell
+
+        if self.diffkind == "diagonal":
+            return self.diffcell[icomp]
+
+        raise ValueError(
+            "Scalar component diffusion requested for coupled diffusion"
+        )
+
+    def _add_reaction_scalar_diagonal(self, Ai, icomp):
+        if self.reactionkind is None:
+            return Ai
+
+        if self.reactionkind == "scalar":
+            return Ai + self.fem.computeMassMatrix(coeff=self.reactioncell)
+
+        if self.reactionkind == "diagonal":
+            return Ai + self.fem.computeMassMatrix(coeff=self.reactioncell[icomp])
+
+        return Ai
+
+    def _reaction_matrix(self):
+        from scipy.sparse import block_diag, bmat
+
+        if self.reactioncell is None:
+            return None
+
+        ncomp = self.ncomps[0]
+
+        if self.reactionkind == "scalar":
+            R0 = self.fem.computeMassMatrix(coeff=self.reactioncell)
+            return block_diag([R0] * ncomp, format="csr")
+
+        if self.reactionkind == "diagonal":
+            return block_diag(
+                [
+                    self.fem.computeMassMatrix(coeff=self.reactioncell[i])
+                    for i in range(ncomp)
+                ],
+                format="csr",
+            )
+
+        if self.reactionkind == "coupled":
+            return bmat(
+                [
+                    [
+                        self.fem.computeMassMatrix(coeff=self.reactioncell[i, j])
+                        for j in range(ncomp)
+                    ]
+                    for i in range(ncomp)
+                ],
+                format="csr",
+            )
+
+        raise ValueError(f"unknown {self.reactionkind=}")
+
+    def computeMatrix(self, u=None, coeffmass=None):
+        from scipy.sparse import block_diag, bmat
+
+        bdrycond = self.problemdata.bdrycond
+        colorsrobin = bdrycond.colorsOfType("Robin")
+        colorsdir = bdrycond.colorsOfType("Dirichlet")
+
+        ncomp = self.ncomps[0]
+
+        def add_scalar_lower_order(Ai):
+            Ai += self.fem.computeBdryMassMatrix(
+                colorsrobin,
+                bdrycond.param,
+                lumped=True,
+            )
+
+            if self.hasconvection:
+                Ai += self.fem.computeMatrixTransportCellWise(
+                    self.convdata,
+                    type="centered",
+                )
+
+                if hasattr(self.fem, "computeMatrixJump"):
+                    Ai += self.fem.computeMatrixJump(self.convdata.betart)
+
+                if self.convectionmethod == "lps":
+                    Ai += self.fem.computeMatrixLps(
+                        self.convdata.betart,
+                        lpsparam=self.lpsparam,
+                    )
+
+            if coeffmass is not None:
+                Ai += self.fem.computeMassMatrix(coeff=coeffmass)
+
+            return Ai
+
+        def reaction_matrix():
+            if getattr(self, "reactioncell", None) is None:
+                return None
+
+            if self.reactionkind == "scalar":
+                R0 = self.fem.computeMassMatrix(coeff=self.reactioncell)
+                return block_diag([R0] * ncomp, format="csr")
+
+            if self.reactionkind == "diagonal":
+                return block_diag(
+                    [
+                        self.fem.computeMassMatrix(coeff=self.reactioncell[i])
+                        for i in range(ncomp)
+                    ],
+                    format="csr",
+                )
+
+            if self.reactionkind == "coupled":
+                return bmat(
+                    [
+                        [
+                            self.fem.computeMassMatrix(
+                                coeff=self.reactioncell[i, j]
+                            )
+                            for j in range(ncomp)
+                        ]
+                        for i in range(ncomp)
+                    ],
+                    format="csr",
+                )
+
+            raise ValueError(f"unknown {self.reactionkind=}")
+
+        # ------------------------------------------------------------
+        # scalar/diagonal diffusion
+        # ------------------------------------------------------------
+        if self.diffkind in ("scalar", "diagonal"):
+            blocks = []
+
+            for icomp in range(ncomp):
+                diff_i = self._scalar_component_diffusion(icomp)
+
+                Ai = self.fem.computeMatrixDiffusion(diff_i)
+                Ai = add_scalar_lower_order(Ai)
+
+                if self.dirichletmethod != "nitsche":
+                    Ai = self.fem.matrixBoundaryStrong(Ai, self.bdrydata)
+                else:
+                    Ai += self.fem.computeMatrixNitscheDiffusion(
+                        self.nitscheparam,
+                        diffcoff=diff_i,
+                        colors=colorsdir,
+                        lumped=self.nitsche_lumped,
+                    )
+
+                blocks.append(Ai)
+
+            A = block_diag(blocks, format="csr")
+
+            R = reaction_matrix()
+            if R is not None:
+                if (
+                        self.dirichletmethod != "nitsche"
+                        and self.reactionkind == "coupled"
+                ):
+                    raise NotImplementedError(
+                        "strong Dirichlet with coupled reaction needs "
+                        "global block boundary treatment"
+                    )
+                A += R
+
+            return A
+
+        # ------------------------------------------------------------
+        # coupled diffusion
+        # ------------------------------------------------------------
+        if self.diffkind == "coupled":
+            matrix_blocks = []
+
+            for i in range(ncomp):
+                row = []
+                for j in range(ncomp):
+                    kij = self.diffcell[i, j]
+
+                    if np.all(kij == 0):
+                        row.append(None)
+                        continue
+
+                    Aij = self.fem.computeMatrixDiffusion(kij)
+
+                    if i == j:
+                        Aij = add_scalar_lower_order(Aij)
+
+                        if self.dirichletmethod != "nitsche":
+                            Aij = self.fem.matrixBoundaryStrong(
+                                Aij,
+                                self.bdrydata,
+                            )
+                        else:
+                            raise NotImplementedError(
+                                "Nitsche matrix for coupled diffusion is not implemented yet"
+                            )
+
+                    row.append(Aij)
+
+                matrix_blocks.append(row)
+
+            A = bmat(matrix_blocks, format="csr")
+
+            R = reaction_matrix()
+            if R is not None:
+                if self.dirichletmethod != "nitsche":
+                    raise NotImplementedError(
+                        "strong Dirichlet with coupled diffusion/reaction needs "
+                        "global block boundary treatment"
+                    )
+                A += R
+
+            return A
+
+        raise ValueError(f"unknown {self.diffkind=}")
     def _component_boundary_function(self, f, icomp):
         ncomp = self.ncomps[0]
 
@@ -457,16 +758,36 @@ class EllipticDiscretization(DiscretizationBase):
                     lumped=self.nitsche_lumped,
                 )
         else:
-            if ncomp != 1:
-                raise NotImplementedError("strong Dirichlet for vector elliptic systems")
-            self.fem.vectorBoundaryStrong(B[0], bdrycond, self.bdrydata)
-        if self.hasconvection:
-            fp1 = self.fem.interpolateBoundary(colorsdir, bdrycond.fct)
-
             for icomp in range(ncomp):
+                bdrycondfct_i = {
+                    color: self._component_boundary_function(
+                        bdrycond.fct[color],
+                        icomp,
+                    )
+                    for color in colorsdir
+                }
+
+                self.fem.vectorBoundaryStrong(
+                    B[icomp],
+                    SimpleNamespace(fct=bdrycondfct_i),
+                    self.bdrydata,
+                )
+        if self.hasconvection:
+            for icomp in range(ncomp):
+                bdrycondfct_i = {
+                    color: self._component_boundary_function(
+                        bdrycond.fct[color],
+                        icomp,
+                    )
+                    for color in colorsdir
+                }
+
+                fp1_i = self.fem.interpolateBoundary(colorsdir, bdrycondfct_i)
+
                 self.fem.massDotBoundary(
                     B[icomp],
-                    fp1 if ncomp == 1 else fp1[icomp],
+                    fp1_i,
+                    colors=colorsdir,
                     coeff=-np.minimum(self.convdata.betart, 0),
                 )
         #Fourier-Robin
@@ -492,56 +813,166 @@ class EllipticDiscretization(DiscretizationBase):
         if coeffmass is not None:
             assert u is not None
             self.fem.massDot(b, u, coeff=coeffmass)
-        if hasattr(self, 'bdrydata'):
-            self.fem.vectorBoundaryStrong(b, bdrycond, self.bdrydata)
+        if hasattr(self, "bdrydata"):
+            for icomp in range(ncomp):
+                bdrycondfct_i = {
+                    color: self._component_boundary_function(
+                        bdrycond.fct[color],
+                        icomp,
+                    )
+                    for color in colorsdir
+                }
+
+                self.fem.vectorBoundaryStrong(
+                    B[icomp],
+                    SimpleNamespace(fct=bdrycondfct_i),
+                    self.bdrydata,
+                )
         return b
 
     def postProcess(self, u):
-        data = {'scalar':{}}
-        ncomp = self.application.ncomps[0]
+        data = {"scalar": {}}
+
+        U = u.block("U")
+        ncomp = U.shape[0]
 
         if self.application.exactsolution:
             scal, cell = self.compute_errors_exact(u)
             data["scalar"].update(scal)
             data["cell"] = cell
+
         if self.problemdata.postproc:
-            types = ["bdry_mean", "bdry_fct", "bdry_nflux", "pointvalues", "meanvalues", "linemeans"]
+            if ncomp != 1:
+                raise NotImplementedError(
+                    "postproc boundary/point quantities for vector-valued U "
+                    "need componentwise naming"
+                )
+
+            ui = U[0]
+
+            types = [
+                "bdry_mean",
+                "bdry_fct",
+                "bdry_nflux",
+                "pointvalues",
+                "meanvalues",
+                "linemeans",
+            ]
+
             for name, type in self.problemdata.postproc.type.items():
                 colors = self.problemdata.postproc.colors(name)
+
                 if type == types[0]:
-                    data['scalar'][name] = self.fem.computeBdryMean(u, colors)
+                    data["scalar"][name] = self.fem.computeBdryMean(ui, colors)
+
                 elif type == types[1]:
-                    data['scalar'][name] = self.fem.computeBdryFct(u, colors)
+                    data["scalar"][name] = self.fem.computeBdryFct(ui, colors)
+
                 elif type == types[2]:
-                    if self.dirichletmethod == 'nitsche':
-                        udir = self.fem.interpolateBoundary(colors, self.problemdata.bdrycond.fct)
-                        data['scalar'][name] = self.fem.computeBdryNormalFluxNitsche(self.nitscheparam, u, colors, udir, self.diffcell)
+                    if self.dirichletmethod == "nitsche":
+                        udir = self.fem.interpolateBoundary(
+                            colors,
+                            self.problemdata.bdrycond.fct,
+                        )
+                        data["scalar"][name] = self.fem.computeBdryNormalFluxNitsche(
+                            self.nitscheparam,
+                            ui,
+                            colors,
+                            udir,
+                            self._scalar_component_diffusion(0),
+                        )
                     else:
-                        data['scalar'][name] = self.fem.computeBdryNormalFlux(u, colors, self.bdrydata, self.problemdata.bdrycond, self.diffcell)
+                        data["scalar"][name] = self.fem.computeBdryNormalFlux(
+                            ui,
+                            colors,
+                            self.bdrydata,
+                            self.problemdata.bdrycond,
+                            self._scalar_component_diffusion(0),
+                        )
+
                 elif type == types[3]:
-                    data['scalar'][name] = self.fem.computePointValues(u, colors)
+                    data["scalar"][name] = self.fem.computePointValues(ui, colors)
+
                 elif type == types[4]:
-                    data['scalar'][name] = self.fem.computeMeanValues(u, colors)
+                    data["scalar"][name] = self.fem.computeMeanValues(ui, colors)
+
                 elif type == types[5]:
-                    data['scalar'][name] = self.fem.computeLineValues(u, colors)
+                    data["scalar"][name] = self.fem.computeLineValues(ui, colors)
+
                 else:
-                    raise ValueError(f"unknown postprocess type '{type}' for key '{name}'\nknown types={types=}")
+                    raise ValueError(
+                        f"unknown postprocess type '{type}' for key '{name}'\n"
+                        f"known types={types=}"
+                    )
+
         return data
-
     def computeEstimator(self, u):
-        if "rhs" in self.problemdata.params.fct_glob:
-            xc, yc, zc = self.cell_coordinates_xyz()
-            rhs_cell = self.problemdata.params.fct_glob["rhs"](xc, yc, zc)
-        else:
-            rhs_cell = np.zeros(self.mesh.ncells)
+        U = u.block("U")
+        ncomp = U.shape[0]
 
-        eta, eta2 = self.fem.computeEstimator(
-            u,
-            rhs_cell=rhs_cell,
-            diffcell=self.diffcell,
-        )
+        if self.diffkind == "coupled":
+            raise NotImplementedError("Estimator for coupled diffusion")
+
+        xc, yc, zc = self.cell_coordinates_xyz()
+
+        if "rhs" in self.problemdata.params.fct_glob:
+            rhs_cell = np.asarray(self.problemdata.params.fct_glob["rhs"](xc, yc, zc))
+            if rhs_cell.ndim == 1:
+                rhs_cell = rhs_cell.reshape(1, -1)
+        else:
+            rhs_cell = np.zeros((ncomp, self.mesh.ncells))
+
+        # subtract convection: beta · grad u_i
+        if self.hasconvection:
+            beta = self.convdata.betacell[:, :self.mesh.dimension]
+            for i in range(ncomp):
+                grad_i = self.fem.cell_grad(U[i])
+                rhs_cell[i] -= np.einsum("nd,nd->n", beta, grad_i)
+
+        # subtract reaction: sum_j c_ij u_j
+        if getattr(self, "reactioncell", None) is not None:
+            Ucell = np.vstack([self.fem.to_cell(U[j]) for j in range(ncomp)])
+
+            for i in range(ncomp):
+                for j in range(ncomp):
+                    cij = self.reaction_coeff(i, j)
+                    if np.isscalar(cij) and cij == 0:
+                        continue
+                    rhs_cell[i] -= cij * Ucell[j]
+
+        eta2_total = np.zeros(self.mesh.ncells)
+
+        for i in range(ncomp):
+            diff_i = self._scalar_component_diffusion(i)
+
+            _, eta2_i = self.fem.computeEstimator(
+                U[i],
+                rhs_cell=rhs_cell[i],
+                diffcell=diff_i,
+            )
+            eta2_total += eta2_i
 
         return SimpleNamespace(
-            eta=eta,
-            eta_cell=np.sqrt(eta2),
+            eta=np.sqrt(np.sum(eta2_total)),
+            eta_cell=np.sqrt(eta2_total),
         )
+
+    # in EllipticDiscretization
+    def plot_data(self, u, eta=None):
+        U = u.block("U")
+        ui = U[0]
+
+        if hasattr(self.fem, "to_p1"):
+            point_u = self.fem.to_p1(ui)
+        else:
+            point_u = ui
+
+        cell = {"k": self.kheatcell}
+        if eta is not None:
+            cell["eta"] = eta
+
+        return {
+            "point": {"u": point_u},
+            "cell": cell,
+            "global": {},
+        }

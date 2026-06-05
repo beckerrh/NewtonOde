@@ -78,7 +78,6 @@ class DiscretizationBase:
             err_L2c2 = 0.0
             err_L2n2 = 0.0
             err_H12 = 0.0
-            err_Flux2 = 0.0
             ec_total = None
 
             for icomp, uexi in enumerate(exact_block):
@@ -87,22 +86,18 @@ class DiscretizationBase:
                 e_L2c, ec = fem.computeErrorL2Cell(uexi, ui)
                 e_L2n, en = fem.computeErrorL2(uexi, ui)
                 e_H1 = fem.computeErrorFluxL2(uexi, ui)
-                e_Flux = fem.computeErrorFluxL2(uexi, ui, self.diffcell)
 
                 err_L2c2 += e_L2c ** 2
                 err_L2n2 += e_L2n ** 2
                 err_H12 += e_H1 ** 2
-                err_Flux2 += e_Flux ** 2
 
-                ec2 = ec ** 2
-                ec_total = ec2 if ec_total is None else ec_total + ec2
+                ec_total = ec if ec_total is None else ec_total + ec
 
             prefix = f"{name}_"
 
             scalar[prefix + "err_L2c"] = np.sqrt(err_L2c2)
             scalar[prefix + "err_L2n"] = np.sqrt(err_L2n2)
             scalar[prefix + "err_H1"] = np.sqrt(err_H12)
-            scalar[prefix + "err_Flux"] = np.sqrt(err_Flux2)
 
             if ec_total is not None:
                 cell[prefix + "err"] = np.sqrt(ec_total)

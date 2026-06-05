@@ -15,33 +15,25 @@ from ..linalg import solver_factory
 
 
 #=================================================================#
-class Model(object):
-    def __format__(self, spec):
-        if spec=='-':
-            repr = f"fem={self.fem}"
-            return repr
-        return self.__repr__()
-    def __repr__(self):
-        if hasattr(self, 'mesh'):
-            repr = f"mesh={self.mesh}"
-        else:
-            repr = "no mesh\n"
-        repr += f"problemdata={self.problemdata}"
-        repr += f"\ndisc_params={self.disc_params}"
-        repr += f"\n{self.timer}"
-        return repr
+class Model:
     def __init__(self, **kwargs):
-        # print(f"Model {kwargs=}")
-        self.stack_storage = kwargs.pop("stack_storage", False)
-        self.verbose = kwargs.pop('verbose', 0)
-        self.timer = Utility.timer.Timer()
-        self.application = kwargs.pop('application', None)
-        if self.application is None:
-            raise ValueError(f"Model needs application (since 22/04/23)")
-        self.problemdata = self.application.problemdata
-        self.disc_params = kwargs.pop('disc_params', {})
+        self.discretization_cls = kwargs.pop("discretization")
+        self.discretization_params = kwargs.pop("discretization_params", {})
+        # simple convenience: allow fem="cr1" directly
+        if "fem" in kwargs:
+            self.discretization_params["fem_name"] = kwargs.pop("fem")
+        self.application = kwargs.pop("application")
+        self.disc_params = kwargs.pop("disc_params", {})
         self.linear_solver = kwargs.pop("linear_solver", "spsolve")
         self.linear_solver_params = kwargs.pop("linear_solver_params", {})
+        self.stack_storage = kwargs.pop("stack_storage", False)
+        self.verbose = kwargs.pop("verbose",0)
+        if kwargs:
+            raise ValueError(f"unused arguments: {tuple(kwargs.keys())}")
+
+        self.timer = Utility.timer.Timer()
+        self.problemdata = self.application.problemdata
+
         datadir_def_name = f"{self.__class__.__name__}"+f"_{self.application.__class__.__name__}"
         if 'datadir_add' in kwargs:
             datadir_def_name += kwargs.pop('datadir_add')
@@ -54,8 +46,6 @@ class Model(object):
         with open(self.datadir / "model", "w") as file:
             file.write(str(self))
         # check for unused arguments
-        if len(kwargs.keys()):
-            raise ValueError(f"*** unused arguments {kwargs=}")
 
         #--------prepare AFEM loop------
         self.mesh_hierarchy = None
@@ -93,22 +83,23 @@ class Model(object):
         name += ".npy"
         return np.load(datadir/name)
     #-------------------------------------------------------------------------------
-    def afem_loop(self, niter, theta=0.9, plotting=False, mesh_timer=None):
+    def afem_loop(self, niter, theta=0.9, plot_solution=False, plot_interpolation=False, mesh_timer=None):
         results = []
 
         for ell in range(niter):
             result = self.afem_step(
                 ell,
                 theta=theta,
-                plotting=plotting,
+                plot_solution=plot_solution,
+                plot_interpolation=plot_interpolation,
                 mesh_timer=mesh_timer,
             )
             results.append(result)
 
         return results
 
-    def afem_step(self, ell, theta=0.9, plotting=False, mesh_timer=None):
-        if plotting:
+    def afem_step(self, ell, theta=0.9, plot_solution=False, plot_interpolation=False, mesh_timer=None):
+        if plot_solution or plot_interpolation:
             import matplotlib.pyplot as plt
             import matplotlib.gridspec as gridspec
         disc = self.discs[-1]
@@ -121,8 +112,10 @@ class Model(object):
                 self.As.append(A)
             with self.timer("linear_solver"):
                 self.B.update(A=A)
-                u = self.B.solve(b=b, x0=u0)
-            res = np.linalg.norm(A @ u - b)
+                x = self.B.solve(b=b, x0=u0)
+                u = b.from_flat_like(x) if isinstance(x, np.ndarray) else x
+
+                res = np.linalg.norm(A @ u.flatten() - b.flatten())
             print(
                 f"{ell:2d} "
                 f"N={A.shape[0]:7d} "
@@ -141,18 +134,15 @@ class Model(object):
             result = SimpleNamespace(u=u, postproc=postproc)
             for k, v in result.postproc['scalar'].items():
                 print(f"{k:20s} : {v}")
-            if plotting:
+            if plot_solution:
                 with self.timer("plot"):
                     fig = plt.figure(figsize=(10, 8))
                     fig.suptitle(f"{self.application.__class__.__name__} nn={disc.mesh.nnodes:7d} ({ell=} )",
                                  fontsize=16)
                     outer = gridspec.GridSpec(1, 2, wspace=0.2, hspace=0.2)
-                    disc.mesh.plot_boundary(fig=fig, outer=outer[0])
                     eta_plot = np.sqrt(result.postproc["cell"]["eta"])
-                    if result.u.shape[0] == disc.mesh.nnodes:
-                        data = {"point": {"u": result.u}, "cell": {'k': disc.kheatcell, 'eta': eta_plot}, "global": {}}
-                    else:
-                        data = {"point": {"u": disc.fem.to_p1(result.u)}, "cell": {'k': disc.kheatcell, 'eta': eta_plot}, "global": {}}
+                    disc.mesh.plot_boundary(fig=fig, outer=outer[0])
+                    data = disc.plot_data(result.u, eta=eta_plot)
                     disc.mesh.plot(data=data, alpha=0.5, fig=fig, outer=outer[1])
                     plt.show()
             with self.timer("marking"):
@@ -163,9 +153,6 @@ class Model(object):
                     marked = marking.dorfler_marking(eta, theta=theta)
             with self.timer("refine"):
                 mesh2, info = self.mesh_hierarchy.refine_nvb(marked, timer=mesh_timer, debug=False)
-                # mesh2, info = heat.mesh.refine_nvb(marked, timer=mesh_timer, debug=False)
-            # in Model.afem_step
-
 
             with self.timer("create_discretization"):
                 disc2 = self.discretize(mesh2)
@@ -178,23 +165,73 @@ class Model(object):
                 disc2.u0 = u2
 
 
-            if plotting:
+            if plot_interpolation:
                 with self.timer("plot_interpolation"):
                     fig = plt.figure(figsize=(10, 8))
                     fig.suptitle("Interpolation after NVB refinement", fontsize=16)
                     outer = gridspec.GridSpec(1, 2, wspace=0.2, hspace=0.2)
-                    if result.u.shape[0] == disc.mesh.nnodes:
-                        data = {"point": {"u": result.u}, "cell": {}, "global": {}}
-                        data2 = {"point": {"u": u2}, "cell": {}, "global": {}}
-                    else:
-                        data = {"point": {"u": disc.fem.to_p1(result.u)}, "cell": {}, "global": {}}
-                        data2 = {"point": {"u": disc2.fem.to_p1(u2)}, "cell": {}, "global": {}}
+                    data = disc.plot_data(result.u)
+                    data2 = disc2.plot_data(u2)
+                    disc.mesh.plot(data=data, fig=fig, outer=outer[0], alpha=0.1)
+                    mesh2.plot(data=data2, fig=fig, outer=outer[1])
                     disc.mesh.plot(data=data, fig=fig, outer=outer[0], alpha=0.1)
                     mesh2.plot(data=data2, fig=fig, outer=outer[1])
                     plt.show()
 
         return result
 
-# ------------------------------------- #
-if __name__ == '__main__':
-    raise ValueError("unit tests to be written")
+    def discretize(self, mesh):
+        return self.discretization_cls(
+            mesh=mesh,
+            application=self.application,
+            disc_params=self.disc_params.copy(),
+            problemdata=self.problemdata,
+            timer=self.timer,
+            verbose=self.verbose,
+            **self.discretization_params,
+        )
+
+    def initial_guess(self):
+        disc = self.discs[-1]
+        b = disc.computeRhs()
+        return disc.initsolution(b)
+
+    def add_update(self, x, alpha, p):
+        return x.from_flat_like(x.flatten() + alpha * p.flatten())
+
+    def evaluate(self, x):
+        disc = self.discs[-1]
+        r = disc.computeForm(x)
+        resn = np.linalg.norm(r)
+
+        est = disc.computeEstimator(x)
+        merit = np.sqrt(est.eta ** 2 + resn ** 2)
+
+        return SimpleNamespace(
+            residual=r,
+            meritvalue=merit,
+            norm_X=np.linalg.norm(x.flatten()),
+        )
+
+    def compute_newton_step(self, x, state, info):
+        disc = self.discs[-1]
+
+        A = disc.computeJacobian(x)
+        r = disc.computeResidual(x)
+
+        self.As.append(A)
+        self.B.update(A=A)
+
+        p_flat = self.B.solve(
+            b=-r,
+            x0=np.zeros_like(r),
+        )
+        p = x.from_flat_like(p_flat)
+
+        return SimpleNamespace(
+            dx=p,
+            dx_norm=np.linalg.norm(p_flat),
+            x=x,
+            success=True,
+        )
+

@@ -5,6 +5,7 @@ Created on Mon Dec  5 15:38:16 2016
 
 @author: becker
 """
+import numpy as np
 try:
     from . import newtondata
 except ImportError:
@@ -217,12 +218,26 @@ class Newton:
         self.iterdata.tol_stop_abs = tol_stop
         self.iterdata.merit0 = merit0
         self.logger.print_names()
+        self.log_iteration(
+            0,
+            state,
+            step=SimpleNamespace(
+                step_type="init",
+                dx_norm=np.nan,
+                liniter=0,
+            ),
+            accepted=SimpleNamespace(
+                alpha=np.nan,
+                ntrial=0,
+            ),
+        )
         for it in range(self.sdata.maxiter):
             self.iterdata.iter = it
 
             if state.meritvalue <= tol_stop:
                 self.iterdata.success = True
                 self.iterdata.failure = None
+
                 return x, self.iterdata, self.logger
 
             info = SimpleNamespace(

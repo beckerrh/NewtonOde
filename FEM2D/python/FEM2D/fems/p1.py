@@ -25,6 +25,14 @@ class P1(p1general.P1general):
         scale = -1/self.mesh.dimension
         return scale*(normals[faces_of_cells].T * self.mesh.sigma.T / dV.T).T
     def tonode(self, u): return u
+
+    def cell_grad(self, u):
+        dim = self.mesh.dimension
+        return np.einsum(
+            "nij,ni->nj",
+            self.cellgrads[:, :, :dim],
+            u[self.mesh.topology.cells],
+        )
     #  bc
     def prepareBoundary(self, colorsdir, colorsflux=[]):
         bdrydata = data.BdryData()
@@ -40,34 +48,20 @@ class P1(p1general.P1general):
             facesdir = self.mesh.labels.boundary[color]
             bdrydata.nodesdirflux[color] = np.unique(self.mesh.topology.faces[facesdir].ravel())
         return bdrydata
-    def matrixBoundaryStrong(self, A, bdrydata, method = 'strong'):
-        # method = self.params_str['dirichletmethod']
-        # if method not in ['strong','new']: return
-        nodesdir, nodedirall, nodesinner, nodesdirflux = bdrydata.nodesdir, bdrydata.nodedirall, bdrydata.nodesinner, bdrydata.nodesdirflux
-        nnodes = self.mesh.nnodes
-        for color, nodes in nodesdirflux.items():
-            nb = nodes.shape[0]
-            help = sparse.dok_matrix((nb, nnodes))
-            for i in range(nb): help[i, nodes[i]] = 1
-            bdrydata.Asaved[color] = help.dot(A)
-        bdrydata.A_inner_dir = A[nodesinner, :][:, nodedirall]
-        help = np.ones((nnodes), dtype=nodedirall.dtype)
-        help[nodedirall] = 0
-        help = sparse.dia_matrix((help, 0), shape=(nnodes, nnodes))
-        # A = help.dot(A.dot(help))
-        diag = np.zeros((nnodes))
-        if method == 'strong':
-            diag[nodedirall] = 1.0
-            diag = sparse.dia_matrix((diag, 0), shape=(nnodes, nnodes))
-        else:
-            dirparam = self.params_float['nitscheparam']
-            bdrydata.A_dir_dir = dirparam*A[nodedirall, :][:, nodedirall]
-            diag[nodedirall] = np.sqrt(dirparam)
-            diag = sparse.dia_matrix((diag, 0), shape=(nnodes, nnodes))
-            diag = diag.dot(A.dot(diag))
-        A = help.dot(A)
-        A += diag
-        return A
+
+    def matrixBoundaryStrong(self, A, bdrydata):
+        n = self.nunknowns()
+        bdofs = bdrydata.nodedirall
+
+        mask = np.ones(n)
+        mask[bdofs] = 0.0
+        D = sparse.diags(mask, format="csr")
+
+        A = D @ A
+
+        A = A.tolil()
+        A[bdofs, bdofs] = 1.0
+        return A.tocsr()
     def vectorBoundaryStrong(self, b, bdrycond, bdrydata, method="strong"):
         # method = self.params_str['dirichletmethod']
         # if method not in ['strong','new']: return
@@ -120,7 +114,7 @@ class P1(p1general.P1general):
     def computeFormNitscheDiffusion(self, nitsche_param, du, u, diffcoff, colorsdir, lumped=False):
         assert u.shape[0]==self.mesh.nnodes
         dim  = self.mesh.dimension
-        massloc = tools.barycentric.tensor(d=dim - 1, k=2)
+        massloc = barycentric.tensor(d=dim - 1, k=2)
         massloc = np.diag(np.sum(massloc,axis=1))
         faces = self.mesh.bdryFaces(colorsdir)
         nodes, cells, normalsS = self.mesh.topology.faces[faces], self.mesh.topology.cells_of_faces[faces,0], self.mesh.geometry.normals[faces,:dim]
@@ -214,7 +208,7 @@ cells]
                 b[nodes] = f[color](x, y, z)
         return b
     # matrices
-    def masslocal(self): return tools.barycentric.tensor(d=self.mesh.dimension, k=2)
+    def masslocal(self): return barycentric.tensor(d=self.mesh.dimension, k=2)
     def computeMassMatrix(self, coeff=1, lumped=False):
         dim, dV, nnodes = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.nnodes
         if lumped:
@@ -329,6 +323,55 @@ cells]
         A = self.computeMatrixTransportCellWise(data, type='centered')
         A += self.computeMatrixLps(data.betart)
         return A
+
+    def computeFormTransportCellWise(self, du, u, data, type):
+        beta = data.betacell
+        betart = data.betart
+
+        dim = self.mesh.dimension
+        dV = self.mesh.geometry.cell_volumes
+        dofspercell = self.dofspercell()
+        cellgrads = self.cellgrads[:, :, :dim]
+
+        if type == "centered":
+            mus = np.full(dim + 1, 1.0 / (dim + 1))
+            mat = np.einsum(
+                "n,njk,nk,i,nj->ni",
+                dV,
+                cellgrads,
+                beta,
+                mus,
+                u[dofspercell],
+            )
+
+        elif type == "supg":
+            mus = data.md.mus
+            mat = np.einsum(
+                "n,njk,nk,ni,nj->ni",
+                dV,
+                cellgrads,
+                beta,
+                mus,
+                u[dofspercell],
+            )
+
+        else:
+            raise ValueError(f"unknown type {type=}")
+
+        np.add.at(du, dofspercell, mat)
+
+        self.massDotBoundary(
+            du,
+            u,
+            coeff=-np.minimum(betart, 0),
+            lumped=True,
+        )
+
+        return du
+    # def computeFormTransportCellWise(self, du, u, data, type):
+    #     A = self.computeMatrixTransportCellWise(data, type=type)
+    #     du += A @ u
+    #     return du
     def computeMatrixTransportCellWise(self, data, type):
         nnodes, ncells, nfaces, dim = self.mesh.nnodes, self.mesh.ncells, self.mesh.nfaces, self.mesh.dimension
         if type=='centered':
@@ -345,9 +388,9 @@ cells]
         return A
     def computeMassMatrixSupg(self, xd, data, coeff=1):
         dim, dV, nnodes, xK = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.nnodes, self.mesh.geometry.cell_centers
-        massloc = tools.barycentric.tensor(d=dim, k=2)
+        massloc = barycentric.tensor(d=dim, k=2)
         mass = np.einsum('n,ij->nij', coeff*dV, massloc)
-        massloc = tools.barycentric.tensor(d=dim, k=1)
+        massloc = barycentric.tensor(d=dim, k=1)
         # marche si xd = xK + delta*betaC
         # mass += np.einsum('n,nik,nk,j -> nij', coeff*delta*dV, self.cellgrads[:,:,:dim], betaC, massloc)
         mass += np.einsum('n,nik,nk,j -> nij', coeff*dV, self.cellgrads[:,:,:dim], xd[:,:dim]-xK[:,:dim], massloc)

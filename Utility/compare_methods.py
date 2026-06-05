@@ -30,17 +30,19 @@ class CompareMethods:
                 A = disc.computeMatrix()
                 u0 = disc.initsolution(b)
 
-                #
-                # print("A", A.shape)
-                # print("b", b.shape)
-                # print("u0", u0.shape)
-                # print("fem.nunknowns()", disc.fem.nunknowns())
-
                 m.As.append(A)
                 m.B.update(A=A)
 
-                x = m.B.solve(b=b.flatten(), x0=u0.flatten())
-                u = b.from_flat_like(x)
+                x = m.B.solve(b=b, x0=u0)
+
+                if hasattr(x, "parts"):
+                    u = x
+                    xf = x.flatten()
+                else:
+                    u = b.from_flat_like(x)
+                    xf = np.asarray(x)
+
+                bf = b.flatten()
 
                 post = disc.postProcess(u)
                 scal = post.get("scalar", {})
@@ -50,10 +52,9 @@ class CompareMethods:
                     "level": level,
                     "N": A.shape[0],
                     "niter": getattr(m.B, "niter", None),
-                    "res": np.linalg.norm(A @ x - b),
+                    "res": np.linalg.norm(A @ xf - bf),
                     **scal,
                 }
-
                 if self.callback is not None:
                     self.callback(method=m, disc=disc, level=level, u=u, post=post, row=row)
 
@@ -87,8 +88,8 @@ class CompareMethods:
 
         df = self.df
         quantities = [
-            q for q in ["err_L2c", "err_L2n", "err_H1", "err_Flux"]
-            if q in df.columns
+            q for q in df.columns
+            if q.endswith(("err_L2c", "err_L2n", "err_H1", "err_Flux"))
         ]
 
         plot_dicts = {}

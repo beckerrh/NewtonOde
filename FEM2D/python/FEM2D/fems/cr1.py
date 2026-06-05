@@ -229,33 +229,20 @@ class CR1(p1general.P1general):
         b[facesdirall] = help[facesdirall]
         # else:
         #     b[facesdirall] = bdrydata.A_dir_dir * help[facesdirall]
-    def matrixBoundaryStrong(self, A, bdrydata, method='strong'):
-        # method = self.params_str['dirichletmethod']
-        # if method not in ['strong','new']: return
-        facesdirflux, facesinner, facesdirall, colorsdir = bdrydata.facesdirflux, bdrydata.facesinner, bdrydata.facesdirall, bdrydata.colorsdir
-        nfaces = self.mesh.nfaces
-        for color, faces in facesdirflux.items():
-            nb = faces.shape[0]
-            help = sparse.dok_matrix((nb, nfaces))
-            for i in range(nb): help[i, faces[i]] = 1
-            bdrydata.Asaved[color] = help.dot(A)
-        bdrydata.A_inner_dir = A[facesinner, :][:, facesdirall]
-        help = np.ones((nfaces))
-        help[facesdirall] = 0
-        help = sparse.dia_matrix((help, 0), shape=(nfaces, nfaces))
-        # A = help.dot(A.dot(help))
-        diag = np.zeros((nfaces))
-        if method == 'strong':
-            diag[facesdirall] = 1.0
-            diag = sparse.dia_matrix((diag, 0), shape=(nfaces, nfaces))
-        else:
-            bdrydata.A_dir_dir = self.dirichlet_strong*A[facesdirall, :][:, facesdirall]
-            diag[facesdirall] = np.sqrt(self.dirichlet_strong)
-            diag = sparse.dia_matrix((diag, 0), shape=(nfaces, nfaces))
-            diag = diag.dot(A.dot(diag))
-        A = help.dot(A)
-        A += diag
-        return A
+
+    def matrixBoundaryStrong(self, A, bdrydata):
+        n = self.nunknowns()
+        bdofs = bdrydata.facesdirall
+
+        mask = np.ones(n)
+        mask[bdofs] = 0.0
+        D = sparse.diags(mask, format="csr")
+
+        A = D @ A
+
+        A = A.tolil()
+        A[bdofs, bdofs] = 1.0
+        return A.tocsr()
     # interpolate
     def interpolate(self, f):
         return f(self.face_x, self.face_y, self.face_z)
