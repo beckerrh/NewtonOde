@@ -48,8 +48,12 @@ class Logger:
             f += f"{k:>{v}}"
         n = len(f)
         return n*'-'+'\n'+f+'\n'+n*'-'
+
     def print_names(self, add=""):
-         print(self.header()+add)
+        h = self.header()
+        if h is None:
+            return
+        print(h + add)
 
     def print(self):
         if not self.verbose: return
@@ -67,10 +71,13 @@ class Logger:
     def print_history(self, filename=None):
         if not hasattr(self, 'history'):
             raise ValueError("No history stored.")
-        if filename == None: filename = f"{self.name.strip()}_history.txt"
+        if filename is None:
+            filename = f"{self.name.strip()}_history.txt"
+
         with open(filename, 'w') as f:
-            f.write(self.header() + '\n')
+            h = self.header()
+            if h is not None:
+                f.write(h + '\n')
             for row in self.history:
                 f.write(row + '\n')
-
 

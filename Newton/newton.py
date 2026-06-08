@@ -143,6 +143,7 @@ class Newton:
             if not hasattr(step, "x"):
                 step.x = x
             step.step_type = "newton"
+
             return step
 
         if request.step_type == "regularized_newton":
@@ -177,13 +178,24 @@ class Newton:
 
         step0 = self.build_step(x, state, info)
 
+        if not getattr(step0, "success", True):
+            accepted = SimpleNamespace(
+                success=False,
+                x=getattr(step0, "x", x),
+                state=state,
+                alpha=0.0,
+                ntrial=0,
+                aimed=np.nan,
+                failure=getattr(step0, "failure", "step computation failed"),
+            )
+            return step0, accepted
+
         accepted = self.globalization.accept(
             state=state,
             step=step0,
             solver=self,
             info=info,
         )
-
         step = getattr(accepted, "step", step0)
 
         if self.acceptable_step(state, step, accepted):
@@ -253,7 +265,10 @@ class Newton:
                 self.nd.call_back(self.iterdata, accepted)
 
             if not accepted.success:
-                return self.fail(x, f"globalization failed", accepted)
+                msg = getattr(accepted, "reason", None)
+                if msg is None:
+                    msg = getattr(accepted, "failure", "step/globalization failed")
+                return self.fail(x, msg, accepted)
 
             x = accepted.x
             state = accepted.state

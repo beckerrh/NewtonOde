@@ -2,8 +2,59 @@ import numpy as np
 
 
 class FemVector:
+
+    def __add__(self, other):
+        if not isinstance(other, FemVector):
+            return NotImplemented
+
+        if self.names != other.names:
+            raise ValueError(f"{self.names=} != {other.names=}")
+
+        parts = tuple(
+            U + V for U, V in zip(self.parts, other.parts)
+        )
+
+        return FemVector(
+            parts,
+            names=self.names,
+            stack_storage=self.stack_storage,
+        )
+
+    def __sub__(self, other):
+        if not isinstance(other, FemVector):
+            return NotImplemented
+
+        if self.names != other.names:
+            raise ValueError(f"{self.names=} != {other.names=}")
+
+        parts = tuple(
+            U - V for U, V in zip(self.parts, other.parts)
+        )
+
+        return FemVector(
+            parts,
+            names=self.names,
+            stack_storage=self.stack_storage,
+        )
+
+    def __mul__(self, alpha):
+        if not np.isscalar(alpha):
+            return NotImplemented
+
+        parts = tuple(alpha * U for U in self.parts)
+
+        return FemVector(
+            parts,
+            names=self.names,
+            stack_storage=self.stack_storage,
+        )
+
+    def __rmul__(self, alpha):
+        return self.__mul__(alpha)
+
     def __repr__(self):
         return f"FemVector(shape={self.shape}, names={self.names})"
+
     def __init__(self, parts, names=None, stack_storage=True):
         self.parts = tuple(np.asarray(U) for U in parts)
         self.stack_storage = stack_storage
@@ -23,7 +74,7 @@ class FemVector:
         return self.nparts
 
     def __getitem__(self, ipart):
-        return self.block(ipart)
+        return self.part(ipart)
 
     def as_flat(self):
         return self.flatten()
@@ -81,7 +132,7 @@ class FemVector:
             return self.name_to_part[ipart]
         return int(ipart)
 
-    def block(self, ipart):
+    def part(self, ipart):
         return self.parts[self.part_index(ipart)]
 
     def copy(self):

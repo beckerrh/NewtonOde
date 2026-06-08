@@ -1,13 +1,9 @@
-class NewtonDriver:
-    def __init__(self, model):
-        self.model = model
+from .base_newton_driver import BaseNewtonDriver
 
-    def initial_guess(self):
-        disc = self.model.discs[-1]
-        return disc.newVector()
-
-    def add_update(self, x, alpha, p):
-        return x.from_flat_like(x.flatten() + alpha * p.flatten())
+#=================================================================#
+class NewtonDriverOneLevel(BaseNewtonDriver):
+    def __init__(self, model, **kwargs):
+        super().__init__(model, **kwargs)
 
     def evaluate(self, x):
         from types import SimpleNamespace
@@ -18,6 +14,11 @@ class NewtonDriver:
         F = disc.computeForm(x)
         b = disc.computeRhs()
         r = F.flatten() - b.flatten()
+
+        if disc.dirichletmethod == "strong":
+            bd = disc.boundary_dofs_global()
+            r[bd] = 0.0
+
 
         resn = np.linalg.norm(r)
         merit = resn
@@ -36,7 +37,7 @@ class NewtonDriver:
 
         disc = self.model.discs[-1]
 
-        A = disc.computeMatrix()
+        A = disc.computeMatrix(x)
         r = state.residual
 
         self.model.B.update(A=A)
@@ -48,22 +49,13 @@ class NewtonDriver:
 
         p = x.from_flat_like(p_flat)
 
-        # A = disc.computeMatrix()
-        # b = disc.computeRhs()
-        # r_matrix = A @ x.flatten() - b.flatten()
-        # r_form = disc.computeForm(x).flatten() - b.flatten()
-        #
-        # print("matrix residual", np.linalg.norm(r_matrix))
-        # print("form residual  ", np.linalg.norm(r_form))
-        # print("form-matrix diff", np.linalg.norm(r_form - r_matrix))
-
 
 
         return SimpleNamespace(
             dx=p,
             dx_norm=np.linalg.norm(p_flat),
-            meritgrad=-state.meritvalue,
             liniter=getattr(self.model.B, "niter", 0),
             x=x,
             success=True,
         )
+

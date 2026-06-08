@@ -26,23 +26,11 @@ class CompareMethods:
             for level in range(self.nref):
                 disc = m.discs[-1]
 
-                b = disc.computeRhs()
-                A = disc.computeMatrix()
-                u0 = disc.initsolution(b)
+                result = m.solve_tangent_equation(disc=disc)
 
-                m.As.append(A)
-                m.B.update(A=A)
-
-                x = m.B.solve(b=b, x0=u0)
-
-                if hasattr(x, "parts"):
-                    u = x
-                    xf = x.flatten()
-                else:
-                    u = b.from_flat_like(x)
-                    xf = np.asarray(x)
-
-                bf = b.flatten()
+                u = result.u
+                A = result.A
+                b = result.b
 
                 post = disc.postProcess(u)
                 scal = post.get("scalar", {})
@@ -51,10 +39,52 @@ class CompareMethods:
                     "method": name,
                     "level": level,
                     "N": A.shape[0],
+                    "niter": result.niter,
+                    "res": result.res,
+                    **scal,
+                }
+
+                # b = disc.computeRhs()
+                # A = disc.computeMatrix()
+                # u0 = disc.initsolution(b)
+                #
+                # m.As.append(A)
+                # m.B.update(A=A)
+                #
+                # x = m.B.solve(b=b, x0=u0)
+
+                # if hasattr(x, "parts"):
+                #     u = x
+                #     xf = x.flatten()
+                # else:
+                #     u = b.from_flat_like(x)
+                #     xf = np.asarray(x)
+                #
+                # bf = b.flatten()
+
+                post = disc.postProcess(u)
+                scal = post.get("scalar", {})
+
+                xf = u.to_flat() if hasattr(u, "to_flat") else np.asarray(u).ravel()
+                bf = b.to_flat() if hasattr(b, "to_flat") else np.asarray(b).ravel()
+                row = {
+                    "method": name,
+                    "level": level,
+                    "N": A.shape[0],
                     "niter": getattr(m.B, "niter", None),
                     "res": np.linalg.norm(A @ xf - bf),
                     **scal,
                 }
+                est_nl = disc.computeEstimator(u, linearized=False)
+                est_lin = disc.computeEstimator(u, linearized=True)
+
+                row["eta"] = float(est_nl.eta2)
+                row["eta_cell_l2"] = float(np.linalg.norm(est_nl.eta))
+                row["eta_cell_max"] = float(np.max(est_nl.eta))
+
+                row["eta_lin"] = float(est_lin.eta2)
+                row["eta_lin_cell_l2"] = float(np.linalg.norm(est_lin.eta))
+                row["eta_lin_cell_max"] = float(np.max(est_lin.eta))
                 if self.callback is not None:
                     self.callback(method=m, disc=disc, level=level, u=u, post=post, row=row)
 
@@ -79,7 +109,7 @@ class CompareMethods:
             raise RuntimeError("run() first")
         print(self.df.to_string())
 
-    def plot_errors(self, rate_ignore=2):
+    def plot_errors(self, rate_ignore=2, show=True):
         if self.df is None:
             raise RuntimeError("run() first")
 
@@ -110,10 +140,32 @@ class CompareMethods:
                 "ylabel": q,
             }
 
-        plot_error_curves(plot_dicts, rate_ignore=2, separate=True)
-        plt.show()
+        figs = plot_error_curves(plot_dicts, rate_ignore=2, separate=True)
+        if show:
+            plt.show()
 
-    def plot_iterations(self):
+        return figs
+
+    def plot_error_estimator(self, error_key="U_err_H1", estimator_key="eta"):
+        import matplotlib.pyplot as plt
+
+        df = self.df
+
+        for method, dfi in df.groupby("method"):
+            dfi = dfi.sort_values("N")
+
+            plt.figure()
+            plt.loglog(dfi["N"], dfi[error_key], "o-", label=error_key)
+            plt.loglog(dfi["N"], dfi[estimator_key], "s-", label=estimator_key)
+
+            plt.xlabel("N")
+            plt.ylabel("value")
+            plt.grid(True, which="both")
+            plt.legend()
+            plt.title(method)
+            plt.show()
+
+    def plot_iterations(self, show=True):
         if self.df is None:
             raise RuntimeError("run() first")
 
@@ -122,7 +174,7 @@ class CompareMethods:
 
         df = self.df
         if "niter" not in df.columns:
-            return
+            return None
 
         plot_dicts = {
             "Iterations": {
@@ -138,5 +190,9 @@ class CompareMethods:
             plot_dicts["Iterations"]["x"].append(d["N"].to_numpy())
             plot_dicts["Iterations"]["y"][method] = d["niter"].to_numpy()
 
-        plot_solutions(plot_dicts)
-        plt.show()
+        fig = plot_solutions(plot_dicts)
+
+        if show:
+            plt.show()
+
+        return fig

@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from dataclasses import dataclass, field
 
 def _check1setinother_(set1, set2, name1="set1", name2="set2"):
     notin2 = set1.difference(set2)
@@ -8,6 +9,67 @@ def _check1setinother_(set1, set2, name1="set1", name2="set2"):
 def _check2setsequal_(set1, set2, name1="set1", name2="set2"):
     _check1setinother_(set1, set2, name1, name2)
     _check1setinother_(set2, set1, name2, name1)
+
+
+
+# ---------------------------------------------------------------- #
+class TrackedDict(dict):
+    def get(self, *args, **kwargs):
+        raise RuntimeError("Use Params.lookup(...) instead of dict.get(...)")
+
+class Params:
+    def __init__(self):
+        self.fct_glob = TrackedDict()
+        self.scal_glob = TrackedDict()
+        self.scal_cells = TrackedDict()
+        self.scal_celllabels = TrackedDict()
+        self.data = TrackedDict()
+        self._used = {}
+
+    def begin_usage_tracking(self):
+        self._used = {
+            "fct_glob": set(),
+            "scal_glob": set(),
+            "scal_cells": set(),
+            "scal_celllabels": set(),
+            "data": set(),
+        }
+
+    def lookup(self, name, categories):
+        found = []
+
+        for category in categories:
+            d = getattr(self, category)
+            if name in d:
+                found.append((category, d[name]))
+
+        if len(found) > 1:
+            cats = [c for c, _ in found]
+            raise ValueError(f"{name!r} given more than once in {cats}")
+
+        if not found:
+            return None, None
+
+        category, value = found[0]
+        self._used.setdefault(category, set()).add(name)
+        return category, value
+
+    def unused_message(self):
+        parts = []
+
+        for category in [
+            "fct_glob",
+            "scal_glob",
+            "scal_cells",
+            "scal_celllabels",
+            "data",
+        ]:
+            d = getattr(self, category)
+            unused = set(d) - self._used.get(category, set())
+            if unused:
+                parts.append(f"{category} keys={sorted(unused)}")
+
+        return "; ".join(parts)
 
 # ---------------------------------------------------------------- #
 class BoundaryConditions(object):
@@ -100,53 +162,6 @@ class PostProcess(object):
             if t == type: colors.extend(self.color[n])
         return colors
 
-# ---------------------------------------------------------------- #
-class Params(object):
-    """
-    Holds all parameters for a problem:
-    - fct_glob: dictionary name -> function
-    - scal_glob: dictionary name -> float
-    - scal_cells dictionary name -> color -> float
-    """
-    def __init__(self):
-        self.fct_glob = {}
-        self.scal_glob = {}
-        self.scal_cells = {}
-        self.data = {}
-    def __repr__(self):
-        repr = ""
-        if len(self.fct_glob): repr += f" fct_glob={self.fct_glob}"
-        if len(self.scal_glob): repr += f" scal_glob={self.scal_glob}"
-        if len(self.scal_cells): repr += f" scal_cells={self.scal_cells}"
-        return repr[1:]
-    def set_scal_cells(self, name, colors, value):
-        if not name in self.scal_cells: self.scal_cells[name]={}
-        for color in colors: self.scal_cells[name][color] = value
-    def check(self, mesh):
-        for name in self.scal_cells:
-            _check2setsequal_(set(self.scal_cells[name]), set(mesh.labels.cell.keys()), "scal_cells", "mesh.labels.cell")
-        for name in self.scal_glob:
-            if name in self.scal_cells: raise ValueError(f"key '{name}' given twice")
-            if name in self.fct_glob: raise ValueError(f"key '{name}' given twice")
-            if not isinstance(self.scal_glob[name], (int,float)):
-                raise ValueError(f"in 'scal_glob' key '{name}' doesnt have floats but is {self.scal_glob[name]}")
-        for name in self.scal_cells:
-            if name in self.scal_glob: raise ValueError(f"key '{name}' given twice")
-            if name in self.fct_glob: raise ValueError(f"key '{name}' given twice")
-        for name in self.fct_glob:
-            if name in self.scal_cells: raise ValueError(f"key '{name}' given twice")
-            if name in self.scal_glob: raise ValueError(f"key '{name}' given twice")
-    def paramdefined(self, name):
-        return name in self.scal_glob or name in self.scal_cells or name in self.fct_glob
-    def update(self, p):
-        for k,v in p.fct_glob.items(): self.fct_glob[k] = v
-        for k,v in p.scal_glob.items(): self.scal_glob[k] = v
-        for k,v in p.scal_cells.items(): self.scal_cells[k] = v
-        for k,v in p.data.items(): self.data[k] = v
-
-
-
-# ---------------------------------------------------------------- #
 class ProblemData(object):
     """
     Contains data for definition of a problem:
@@ -164,6 +179,8 @@ class ProblemData(object):
         self.solexact = None
         self.params = Params()
 
+    def __bool__(self):
+        return bool(self.params)
     def _split2string(self, string, sep='\n\t\t'):
         return sep+sep.join(str(string).split('\n'))
 

@@ -108,7 +108,7 @@ class Model:
                 b = disc.computeRhs()
                 u0 = disc.initsolution(b)
             with self.timer("matrix"):
-                A = disc.computeMatrix()
+                A = disc.computeMatrix(u0)
                 self.As.append(A)
             with self.timer("linear_solver"):
                 self.B.update(A=A)
@@ -116,19 +116,19 @@ class Model:
                 u = b.from_flat_like(x) if isinstance(x, np.ndarray) else x
 
                 res = np.linalg.norm(A @ u.flatten() - b.flatten())
-            print(
-                f"{ell:2d} "
-                f"N={A.shape[0]:7d} "
-                f"niter={self.B.niter:2d} "
-                f"res={res:.3e}"
-            )
+            # print(
+            #     f"{ell:2d} "
+            #     f"N={A.shape[0]:7d} "
+            #     f"niter={self.B.niter:2d} "
+            #     f"res={res:.3e}"
+            # )
             with self.timer("postproc"):
                 postproc = disc.postProcess(u)
                 if theta <= 1.0:
                     est = disc.computeEstimator(u)
-                    postproc.setdefault("cell", {})
-                    postproc["scalar"]["eta"] = est.eta
-                    postproc["cell"]["eta"] = est.eta_cell
+
+                    postproc["scalar"]["eta"] = float(est.eta2)
+                    postproc["cell"]["eta"] = est.eta
 
                 # self.save(u=u)
             result = SimpleNamespace(u=u, postproc=postproc)
@@ -136,14 +136,12 @@ class Model:
                 print(f"{k:20s} : {v}")
             if plot_solution:
                 with self.timer("plot"):
-                    fig = plt.figure(figsize=(10, 8))
-                    fig.suptitle(f"{self.application.__class__.__name__} nn={disc.mesh.nnodes:7d} ({ell=} )",
-                                 fontsize=16)
-                    outer = gridspec.GridSpec(1, 2, wspace=0.2, hspace=0.2)
-                    eta_plot = np.sqrt(result.postproc["cell"]["eta"])
-                    disc.mesh.plot_boundary(fig=fig, outer=outer[0])
-                    data = disc.plot_data(result.u, eta=eta_plot)
-                    disc.mesh.plot(data=data, alpha=0.5, fig=fig, outer=outer[1])
+                    self.plot_solution(
+                        u=result.u,
+                        disc=disc,
+                        postproc=result.postproc,
+                        alpha=0.5,
+                    )
                     plt.show()
             with self.timer("marking"):
                 if theta > 1:
@@ -164,20 +162,15 @@ class Model:
                 u2 = transfer.interpolate(result.u)
                 disc2.u0 = u2
 
-
             if plot_interpolation:
                 with self.timer("plot_interpolation"):
-                    fig = plt.figure(figsize=(10, 8))
-                    fig.suptitle("Interpolation after NVB refinement", fontsize=16)
-                    outer = gridspec.GridSpec(1, 2, wspace=0.2, hspace=0.2)
-                    data = disc.plot_data(result.u)
-                    data2 = disc2.plot_data(u2)
-                    disc.mesh.plot(data=data, fig=fig, outer=outer[0], alpha=0.1)
-                    mesh2.plot(data=data2, fig=fig, outer=outer[1])
-                    disc.mesh.plot(data=data, fig=fig, outer=outer[0], alpha=0.1)
-                    mesh2.plot(data=data2, fig=fig, outer=outer[1])
+                    self.plot_interpolation(
+                        disc=disc,
+                        u=result.u,
+                        disc2=disc2,
+                        u2=u2,
+                    )
                     plt.show()
-
         return result
 
     def discretize(self, mesh):
@@ -193,8 +186,7 @@ class Model:
 
     def initial_guess(self):
         disc = self.discs[-1]
-        b = disc.computeRhs()
-        return disc.initsolution(b)
+        return disc.initial_guess()
 
     def add_update(self, x, alpha, p):
         return x.from_flat_like(x.flatten() + alpha * p.flatten())
@@ -235,3 +227,109 @@ class Model:
             success=True,
         )
 
+    def plot_solution(self, u=None, disc=None, postproc=None, title=None, **kwargs):
+        import matplotlib.pyplot as plt
+
+        if disc is None:
+            disc = self.discs[-1]
+
+        if u is None:
+            u = getattr(disc, "u", None)
+            if u is None:
+                raise ValueError("plot_solution needs u")
+
+        data = disc.plot_data(u)
+
+        if postproc is not None:
+            for k, v in postproc.get("cell", {}).items():
+                data["cell"][k] = v
+            for k, v in postproc.get("point", {}).items():
+                data["point"][k] = v
+
+        if hasattr(self.application, "plot_data"):
+            appdata = self.application.plot_data(disc=disc, u=u, postproc=postproc)
+            for kind in ("point", "cell", "quiver"):
+                data.setdefault(kind, {}).update(appdata.get(kind, {}))
+
+        if title is None:
+            title = f"{self.application.__class__.__name__} N={disc.fem.nunknowns()}"
+
+        fig = disc.mesh.plot(data=data, title=title, **kwargs)
+        plt.show()
+        return fig
+
+    def plot_interpolation(self, disc, u, disc2, u2, title=None):
+        import matplotlib.pyplot as plt
+        import matplotlib.gridspec as gridspec
+
+        if title is None:
+            title = "Interpolation after NVB refinement"
+
+        fig = plt.figure(figsize=(10, 8))
+        fig.suptitle(title, fontsize=16)
+
+        outer = gridspec.GridSpec(1, 2, wspace=0.2, hspace=0.2)
+
+        data = disc.plot_data(u)
+        data2 = disc2.plot_data(u2)
+
+        disc.mesh.plot(
+            data=data,
+            fig=fig,
+            outer=outer[0],
+            alpha=0.1,
+            title="coarse",
+        )
+
+        disc2.mesh.plot(
+            data=data2,
+            fig=fig,
+            outer=outer[1],
+            alpha=0.5,
+            title="refined/interpolated",
+        )
+
+        return fig
+
+    def solve_tangent_equation(self, disc=None, u=None, rhs=None, store_matrix=True):
+        if disc is None:
+            disc = self.discs[-1]
+
+        if u is None:
+            # linear/affine test point
+            rhs0 = disc.computeRhs()
+            u = disc.initsolution(rhs0)
+
+        A = disc.computeMatrix(u)
+
+        if rhs is None:
+            # affine residual equation: J(u) x = b_affine
+            rhs = disc.computeRhs()
+
+        u0 = disc.initsolution(rhs)
+
+        if store_matrix:
+            self.As.append(A)
+
+        self.B.update(A=A)
+
+        x = self.B.solve(b=rhs, x0=u0)
+
+        if hasattr(x, "parts"):
+            sol = x
+            xf = x.flatten()
+        else:
+            sol = rhs.from_flat_like(x)
+            xf = np.asarray(x)
+
+        res = np.linalg.norm(A @ xf - rhs.flatten())
+
+        return SimpleNamespace(
+            u=sol,
+            x=xf,
+            A=A,
+            b=rhs,
+            res=res,
+            niter=getattr(self.B, "niter", None),
+            disc=disc,
+        )

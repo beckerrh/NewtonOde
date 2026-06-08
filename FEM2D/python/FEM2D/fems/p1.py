@@ -13,10 +13,14 @@ from . import barycentric, p1general, data, mesh_transfer
 class P1(p1general.P1general):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
     def setMesh(self, mesh):
         super().setMesh(mesh)
+        # P1
         self.computeStencilCell(self.mesh.topology.cells)
-        self.cellgrads = self.computeCellGrads()
+        self.node_x, self.node_y, self.node_z = self._xyz_from_points(
+            self.mesh.geometry.points
+        )
     def nlocal(self): return self.mesh.dimension+1
     def nunknowns(self): return self.mesh.nnodes
     def dofspercell(self): return self.mesh.topology.cells
@@ -24,16 +28,30 @@ class P1(p1general.P1general):
         ncells, normals, cells_of_faces, faces_of_cells, dV = self.mesh.ncells, self.mesh.geometry.normals, self.mesh.topology.cells_of_faces, self.mesh.topology.faces_of_cells, self.mesh.geometry.cell_volumes
         scale = -1/self.mesh.dimension
         return scale*(normals[faces_of_cells].T * self.mesh.sigma.T / dV.T).T
-    def tonode(self, u): return u
 
-    def cell_grad(self, u):
-        dim = self.mesh.dimension
-        return np.einsum(
-            "nij,ni->nj",
-            self.cellgrads[:, :, :dim],
-            u[self.mesh.topology.cells],
-        )
-    #  bc
+    def dofs_of_cells(self):
+        return self.mesh.topology.cells
+
+    def masslocal(self):
+        return barycentric.tensor(d=self.mesh.dimension, k=2)
+
+    def masslocal_variable(self):
+        return barycentric.tensor(d=self.mesh.dimension, k=3)
+
+    def tonode(self, u): return u
+    def to_p1(self, u): return u
+
+    def dof_coordinates_xyz(self):
+        return self.node_x, self.node_y, self.node_z
+
+    def dirichlet_dofs(self, bdrydata=None):
+        if bdrydata is None:
+            bdrydata = self.bdrydata
+
+        faces = self.boundary_faces_from_bdrydata(bdrydata)
+        nodes = np.unique(self.mesh.topology.faces[faces].ravel())
+        return nodes.astype(int)
+
     def prepareBoundary(self, colorsdir, colorsflux=[]):
         bdrydata = data.BdryData()
         bdrydata.nodesdir={}
@@ -207,17 +225,6 @@ cells]
             except:
                 b[nodes] = f[color](x, y, z)
         return b
-    # matrices
-    def masslocal(self): return barycentric.tensor(d=self.mesh.dimension, k=2)
-    def computeMassMatrix(self, coeff=1, lumped=False):
-        dim, dV, nnodes = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.nnodes
-        if lumped:
-            mass = coeff/(dim+1)*dV.repeat(dim+1)
-            rows = self.mesh.topology.cells.ravel()
-            return sparse.coo_matrix((mass, (rows, rows)), shape=(nnodes, nnodes)).tocsr()
-        massloc = self.masslocal()
-        mass = np.einsum('n,kl->nkl', coeff*dV, massloc).ravel()
-        return sparse.coo_matrix((mass, (self.rows, self.cols)), shape=(nnodes, nnodes)).tocsr()
     def computeBdryMassMatrix(self, colors=None, coeff=1, lumped=False):
         nnodes = self.mesh.nnodes
         rows = np.empty(shape=(0), dtype=int)
@@ -242,149 +249,14 @@ cells]
                 nloc = self.mesh.dimension
                 rows = np.append(rows, np.repeat(nodes, nloc).ravel())
                 cols = np.append(cols, np.tile(nodes, nloc).ravel())
-                massloc = tools.barycentric.tensor(d=self.mesh.dimension-1, k=2)
+                massloc = barycentric.tensor(d=self.mesh.dimension-1, k=2)
                 mat = np.append(mat, np.einsum('n,kl->nkl', dS, massloc).ravel())
         return sparse.coo_matrix((mat, (rows, cols)), shape=(nnodes, nnodes)).tocsr()
-    def computeMatrixTransportUpwindAlg(self, data):
-        A =  self.computeMatrixTransportCellWise(data, type='centered')
-        return tools.checkmmatrix.diffusionForMMatrix(A)
-    def computeMatrixTransportUpwindSides(self, data):
-        nnodes, nfaces, ncells, dim, dV = self.mesh.nnodes, self.mesh.nfaces, self.mesh.ncells, self.mesh.dimension, self.mesh.geometry.cell_volumes
-        normalsS, cof, simp = self.mesh.geometry.normals, self.mesh.topology.cells_of_faces, self.mesh.topology.cells
-        dbS = linalg.norm(normalsS, axis=1)*data.betart/dim/(dim+1)
-        innerfaces = self.mesh.topology.inner_faces
-        infaces = np.arange(nfaces)[innerfaces]
-        ci0 = self.mesh.topology.cells_of_inner_faces[:, 0]
-        ci1 = self.mesh.topology.cells_of_inner_faces[:, 1]
-        rows0 = np.repeat(simp[ci0],dim).ravel()
-        rows1 = np.repeat(simp[ci1],dim).ravel()
-        cols = np.tile(self.mesh.topology.faces[infaces], dim + 1).ravel()
-        matloc = np.ones(shape=(dim,dim+1))
-        mat = np.einsum('n,kl->nkl', dbS[infaces], matloc).ravel()
-        A = sparse.coo_matrix((mat, (rows1, cols)), shape=(nnodes, nnodes))
-        A -= sparse.coo_matrix((mat, (rows0, cols)), shape=(nnodes, nnodes))
-        faces = self.mesh.bdryFaces()
-        ci0 = self.mesh.topology.cells_of_faces[faces, 0]
-        rows0 = np.repeat(simp[ci0],dim).ravel()
-        cols = np.tile(self.mesh.topology.faces[infaces], dim + 1).ravel()
-        mat = np.einsum('n,kl->nkl', dbS[faces], matloc).ravel()
-        A -= sparse.coo_matrix((mat, (rows0,cols)), shape=(nnodes, nnodes))
-        A -= self.computeBdryMassMatrix(coeff=np.minimum(data.betart, 0), lumped=True)
-        B = self.computeMatrixTransportCellWise(data, type='centered')
-        A = A.tocsr()
-        B = B.tocsr()
-        # if not np.allclose(A.A,B.A):
-        #     raise ValueError(f"{A.diagonal()=}\n{B.diagonal()=}\n{A.todense()=}\n{B.todense()=}")
-        return A.tocsr()
-    def computeMatrixTransportUpwind(self, data, method):
-        if method=='upwsides': return self.computeMatrixTransportUpwindSides(data)
-        self.masslumped = self.computeMassMatrix(coeff=1, lumped=True)
-        beta, mus, cells, deltas = data.beta, data.md.mus, data.md.cells, data.md.deltas
-        nnodes, simp= self.mesh.nnodes, self.mesh.topology.cells
-        m = data.md.mask()
-        if hasattr(data.md,'cells2'):
-            m2 =  data.md.mask2()
-            m = data.md.maskonly1()
-            print(f"{nnodes=} {np.sum(data.md.mask())=} {np.sum(m2)=} {np.sum(m)=}")
-        ml = self.masslumped.diagonal()[m]/deltas[m]
-        rows = np.arange(nnodes)[m]
-        A = sparse.coo_matrix((ml,(rows,rows)), shape=(nnodes, nnodes))
-        mat = mus[m]*ml[:,np.newaxis]
-        rows = rows.repeat(simp.shape[1])
-        cols = simp[cells[m]]
-        A -=  sparse.coo_matrix((mat.ravel(), (rows.ravel(), cols.ravel())), shape=(nnodes, nnodes))
-        if hasattr(data.md,'cells2'):
-            cells2 = data.md.cells2
-            delta1 = data.md.deltas[m2]
-            delta2 = data.md.deltas2[m2]
-            mus2 = data.md.mus2
-            c0 = (1+delta1/(delta1+delta2))/delta1
-            c1 = -(1+delta1/delta2)/delta1
-            c2 = -c0-c1
-            ml = self.masslumped.diagonal()[m2]
-            rows = np.arange(nnodes)[m2]
-            A += sparse.coo_matrix((c0*ml,(rows,rows)), shape=(nnodes, nnodes))
-            mat = mus[m2]*ml[:,np.newaxis]*c1[:,np.newaxis]
-            rows1 = rows.repeat(simp.shape[1])
-            cols = simp[cells[m2]]
-            A +=  sparse.coo_matrix((mat.ravel(), (rows1.ravel(), cols.ravel())), shape=(nnodes, nnodes))
-            mat = mus2[m2] * ml[:, np.newaxis] * c2[:, np.newaxis]
-            rows2 = rows.repeat(simp.shape[1])
-            cols = simp[cells2[m2]]
-            A += sparse.coo_matrix((mat.ravel(), (rows2.ravel(), cols.ravel())), shape=(nnodes, nnodes))
-        A += self.computeBdryMassMatrix(coeff=-np.minimum(data.betart, 0), lumped=True)
-        # A = checkmmatrix.makeMMatrix(A)
-        w1, w2 = tools.checkmmatrix.checkMmatrix(A)
-        print(f"A {w1=}\n{w2=}")
-        return A.tocsr()
     def computeMatrixTransportSupg(self, data, method):
         return self.computeMatrixTransportCellWise(data, type='supg')
     def computeMatrixTransportLps(self, data):
         A = self.computeMatrixTransportCellWise(data, type='centered')
         A += self.computeMatrixLps(data.betart)
-        return A
-
-    def computeFormTransportCellWise(self, du, u, data, type):
-        beta = data.betacell
-        betart = data.betart
-
-        dim = self.mesh.dimension
-        dV = self.mesh.geometry.cell_volumes
-        dofspercell = self.dofspercell()
-        cellgrads = self.cellgrads[:, :, :dim]
-
-        if type == "centered":
-            mus = np.full(dim + 1, 1.0 / (dim + 1))
-            mat = np.einsum(
-                "n,njk,nk,i,nj->ni",
-                dV,
-                cellgrads,
-                beta,
-                mus,
-                u[dofspercell],
-            )
-
-        elif type == "supg":
-            mus = data.md.mus
-            mat = np.einsum(
-                "n,njk,nk,ni,nj->ni",
-                dV,
-                cellgrads,
-                beta,
-                mus,
-                u[dofspercell],
-            )
-
-        else:
-            raise ValueError(f"unknown type {type=}")
-
-        np.add.at(du, dofspercell, mat)
-
-        self.massDotBoundary(
-            du,
-            u,
-            coeff=-np.minimum(betart, 0),
-            lumped=True,
-        )
-
-        return du
-    # def computeFormTransportCellWise(self, du, u, data, type):
-    #     A = self.computeMatrixTransportCellWise(data, type=type)
-    #     du += A @ u
-    #     return du
-    def computeMatrixTransportCellWise(self, data, type):
-        nnodes, ncells, nfaces, dim = self.mesh.nnodes, self.mesh.ncells, self.mesh.nfaces, self.mesh.dimension
-        if type=='centered':
-            beta, mus = data.betacell, np.full(dim+1,1.0/(dim+1))
-            # print(f"{beta=} {data=}")
-            mat = np.einsum('n,njk,nk,i -> nij', self.mesh.geometry.cell_volumes, self.cellgrads[:,:,:dim], beta, mus)
-            A =  sparse.coo_matrix((mat.ravel(), (self.rows, self.cols)), shape=(nnodes, nnodes)).tocsr()
-        elif type=='supg':
-            beta, mus = data.betacell, data.md.mus
-            mat = np.einsum('n,njk,nk,ni -> nij', self.mesh.geometry.cell_volumes, self.cellgrads[:,:,:dim], beta, mus)
-            A =  sparse.coo_matrix((mat.ravel(), (self.rows, self.cols)), shape=(nnodes, nnodes)).tocsr()
-        else: raise ValueError(f"unknown type {type=}")
-        A -= self.computeBdryMassMatrix(coeff=np.minimum(data.betart, 0), lumped=True)
         return A
     def computeMassMatrixSupg(self, xd, data, coeff=1):
         dim, dV, nnodes, xK = self.mesh.dimension, self.mesh.geometry.cell_volumes, self.mesh.nnodes, self.mesh.geometry.cell_centers
@@ -510,26 +382,6 @@ cells].T, bC)
     # postprocess
     def to_cell(self, u):
         return np.mean(u[self.mesh.topology.cells], axis=1)
-    def computeErrorL2Cell(self, solexact, u):
-        x, y, z = self._xyz_from_points(self.mesh.geometry.cell_centers)
-        uh = self.to_cell(u)
-        ue = solexact(x, y, z)
-        ec = self.mesh.geometry.cell_volumes * (uh - ue) ** 2
-        return np.sqrt(ec.sum()), ec
-    def computeErrorL2(self, solexact, uh):
-        x, y, z = self.mesh.geometry.points.T
-        en = solexact(x, y, z) - uh
-        Men = np.zeros_like(en)
-        return np.sqrt( np.dot(en, self.massDot(Men,en)) ), en
-    def computeErrorFluxL2(self, solexact, uh, diffcell=None):
-        x, y, z = self._xyz_from_points(self.mesh.geometry.cell_centers)
-        graduh = np.einsum('nij,ni->nj', self.cellgrads, uh[self.mesh.topology.cells])
-        errv = 0
-        for i in range(self.mesh.dimension):
-            solxi = solexact.d(i, x, y, z)
-            if diffcell is None: errv += np.sum((solxi - graduh[:, i]) ** 2 * self.mesh.geometry.cell_volumes)
-            else: errv += np.sum( diffcell*(solxi-graduh[:,i])**2* self.mesh.geometry.cell_volumes)
-        return np.sqrt(errv)
     def computeBdryMean(self, u, colors):
         mean, omega = np.zeros(len(colors)), np.zeros(len(colors))
         for i,color in enumerate(colors):
@@ -599,55 +451,13 @@ cells].T, bC)
 cells]],axis=1)*self.mesh.geometry.cell_volumes[cells])
         return up
 
-    def computeEstimator(self, uh, rhs_cell, diffcell=None):
-        """
-        Residual jump estimator for P1:
-            eta_K^2 = h_K^2 ||f||_K^2
-                    + 1/2 sum_{S subset dK int} h_S || [[ A grad u_h . n ]] ||_S^2
-
-        rhs_cell: cellwise value of f, shape (ncells,)
-        diffcell: cellwise diffusion coefficient A, scalar, shape (ncells,)
-        """
-        mesh = self.mesh
-        dim = mesh.dimension
-
-        if diffcell is None:
-            diffcell = np.ones(mesh.ncells)
-
-        # cellwise flux q_K = A_K grad u_h |_K
-        graduh = np.einsum('nij,ni->nj', self.cellgrads[:, :, :dim], uh[mesh.topology.cells])
-        flux = diffcell[:, None] * graduh
-
-        # volume part: h_K^2 ||f||_K^2
-        hK = mesh.geometry.cell_volumes ** (1.0 / dim)
-        eta2 = hK ** 2 * rhs_cell ** 2 * mesh.geometry.cell_volumes
-
-        if not hasattr(mesh, "innerfaces"):
-            mesh.construct_inner_faces()
-
-        faces = mesh.topology.inner_faces
-        ci = mesh.topology.cells_of_inner_faces
-        c0, c1 = ci[:, 0], ci[:, 1]
-
-        normalsS = mesh.geometry.normals[faces, :dim]
-        dS = np.linalg.norm(normalsS, axis=1)
-        nS = normalsS / dS[:, None]
-
-        # sign convention irrelevant after squaring:
-        # jump = (q_0 - q_1) . n_S
-        jump = np.einsum("ij,ij->i", flux[c0] - flux[c1], nS)
-
-        hS = dS if dim == 2 else dS ** (1.0 / (dim - 1.0))
-        face_contrib = 0.5 * hS * jump ** 2 * dS
-
-        np.add.at(eta2, c0, face_contrib)
-        np.add.at(eta2, c1, face_contrib)
-
-        return np.sqrt(np.sum(eta2)), eta2
-
     def build_scalar_prolongation_to_refined_mesh(self, info):
         return mesh_transfer.p1_prolongation(info)
 
+    # P1
+    def cellmean_vector(self, U):
+        cells = self.mesh.topology.cells
+        return np.mean(U[:, cells], axis=2)
 
 # ------------------------------------- #
 if __name__ == '__main__':

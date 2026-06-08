@@ -39,8 +39,8 @@ class EllipticApplicationWithExactSolution(FEM2D.models.application.Application)
         data.bdrycond.set("Robin", colorsrob)
         for col in colorsrob: data.bdrycond.param[col] = 100.
         data.params.scal_glob['kheat'] = 0.1
-        data.params.fct_glob['convection'] = ['0.8', '1.1']
-        data.params.scal_glob['reaction'] = [1.1]
+        # data.params.fct_glob['convection'] = ['0.8', '1.1']
+        # data.params.scal_glob['reaction'] = [1.1]
         # data.params.scal_glob['reaction'] = [
         #     [0.8, -0.2],
         #     [0.5, 1.1],
@@ -50,8 +50,8 @@ class EllipticApplicationWithExactSolution(FEM2D.models.application.Application)
 #================================================================#
 if __name__ == '__main__':
 
-    exactsolution = ["Quadratic", "Linear"]
-    exactsolution = ["Quadratic"]
+    # exactsolution = ["Linear"]
+    exactsolution = ["Quadratic", "Sinus"]
     app = EllipticApplicationWithExactSolution(dim=2, exactsolution=exactsolution)
 
     print(f"{app.ncomps=}")
@@ -67,7 +67,7 @@ if __name__ == '__main__':
 
 
     methods = {
-        "P1 strong": method("p1", dirichletmethod="strong"),
+        # "P1 strong": method("p1", dirichletmethod="strong"),
 
         "P1 nitsche": method(
             "p1",
@@ -75,10 +75,10 @@ if __name__ == '__main__':
             nitscheparam=10,
         ),
 
-        "CR1 strong": method(
-            "cr1",
-            dirichletmethod="strong",
-        ),
+        # "CR1 strong": method(
+        #     "cr1",
+        #     dirichletmethod="strong",
+        # ),
 
         "CR1 nitsche": method(
             "cr1",
@@ -121,4 +121,5 @@ if __name__ == '__main__':
 
     if plotting:
         cmp.plot_errors(rate_ignore=2)
+        cmp.plot_error_estimator(error_key="U_err_H1", estimator_key="eta")
         cmp.plot_iterations()

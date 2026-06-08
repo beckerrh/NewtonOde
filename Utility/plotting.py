@@ -70,6 +70,7 @@ def plot_solutions(plot_dicts, title=None):
         except Exception as e:
             raise KeyError(f"problem in key {k}") from e
     fig.tight_layout(rect=[0, 0, 0.82, 0.95])
+    return fig
 
 #==================================================================
 def compress_repeated_x(x, y, mode="last", ignore_first=0):
@@ -126,11 +127,15 @@ def plot_error_curves(plot_dicts, rate_ignore=0, fixed_order=None, separate=Fals
             dl = [x for _ in range(2) for x in plot_dicts[k]['x']]
             plot_dicts[k]['x'] = dl
 
+    figs = []
     if separate:
         for k, v in plot_dicts.items():
-            plot_solutions({k: v})
+            fig = plot_solutions({k: v})
+            figs.append(fig)
     else:
-        plot_solutions(plot_dicts)
+        fig = plot_solutions(plot_dicts)
+        figs.append(fig)
+    return figs
 
 #==================================================================
 def add_mesh1d(plot_dict, mesh):

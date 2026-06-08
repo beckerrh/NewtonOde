@@ -24,7 +24,7 @@ class StoppingParamaters:
         self.atoldx = kwargs.pop('atoldx', 1e-12)
         self.rtoldx = kwargs.pop('rtoldx', 1e-8)
         self.divx = kwargs.pop('divx', 1e8)
-        self.forcing_lambda = kwargs.pop('forcing_lambda', 0.9)
+        self.forcing_lambda = kwargs.pop('forcing_lambda', 0.5)
         self.forcing_kappa = kwargs.pop('forcing_kappa', 0.5)
 
         if 'nbase' in kwargs:

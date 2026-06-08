@@ -23,11 +23,15 @@ class HeatExample(Application):
         problemdata.postproc.set(name="bdrymean_up", type="bdry_mean", colors=1002)
         problemdata.postproc.set(name="bdrynflux", type="bdry_nflux", colors=[3000])
 
-        problemdata.params.set_scal_cells("kheat", [100], 0.001)
-        problemdata.params.set_scal_cells("kheat", [200], 10.0)
+        problemdata.params.scal_celllabels["kheat"] = {
+            100: 100.01,
+            200: 100.0,
+        }
         problemdata.params.fct_glob["convection"] = ["0", "0.02"]
 
     def defineGeometry(self, geom, h, boundary_projectors):
+        h=0.05
+        h = 0.2
         holes = []
 
         rectangle = geom.add_rectangle(
@@ -65,8 +69,28 @@ class HeatExample(Application):
 
 
 #------------------------------------------------------------------------
+class CDR(HeatExample):
+    def defineProblemData(self, problemdata):
+        super().defineProblemData(problemdata)
+        problemdata.params.scal_glob['reaction'] = [1.1]
+
+class NonlinearCDR(HeatExample):
+    def defineProblemData(self, problemdata):
+        super().defineProblemData(problemdata)
+
+        _coef=0.1
+
+        def reaction(u):
+            return 1.1 * u + _coef * u**3
+
+        def reaction_d(u):
+            return 1.1 + 3*_coef * u**2
+
+        problemdata.params.fct_glob["reaction"] = reaction
+        problemdata.params.fct_glob["reaction_d"] = reaction_d
+
+#------------------------------------------------------------------------
 def linear_example():
-    linear_solvers=["pyamg", 'spsolve', "geommg"]
     linear_solver_params={
         "smoother": "ilu",
         "smoother_kwargs": {
@@ -87,6 +111,7 @@ def linear_example():
         fem="p1",
         linear_solver="geommg",
         linear_solver_params=linear_solver_params,
+        disc_params={"convmethod": "centered"},
     )
 
     mesh_timer = timer.Timer()
@@ -106,23 +131,35 @@ def linear_example():
 
 
 #------------------------------------------------------------------
-def linear_example_by_newton():
-    from FEM2D.models.newton_driver import NewtonDriver
-    from Newton import newton, newtondata
+def newton(NewtonDriver):
+    from Newton import newton, armijo, newtondata
     heat = Model(
-        application=HeatExample(),
+        application=NonlinearCDR(),
         discretization=EllipticDiscretization,
         fem="p1",
-        disc_params={"dirichletmethod":"nitsche"},
+        disc_params={"dirichletmethod":"nitsche",
+                     "reaction_lumped": False,
+                     "convmethod": "lps",
+                     "lpsparam": 1.0},
+        linear_solver="geommg",
     )
 
 
-    sdata = newtondata.StoppingParamaters(maxiter=50, rtol=1e-3, forcing_kappa=0.5)
     x0 = heat.initial_guess()
     newton = newton.Newton(
-        nd = NewtonDriver(heat),
+        nd = NewtonDriver(heat, debug=False, theta=0.8, max_meshiter=100),
         verbose=2,
-        sdata=sdata,
+        globalization=armijo.ArmijoGlobalization(
+            omega=0.5,
+            maxiter=10,
+            c=1e-4,
+            debug=False,
+        ),
+        sdata=newtondata.StoppingParamaters(
+            forcing_lambda=0.5,
+            forcing_kappa=0.75,
+            rtol=0.001,
+        )
     )
     xs, info, logger = newton.solve(x0)
 
@@ -131,11 +168,21 @@ def linear_example_by_newton():
     else:
         print('---- time ---')
         print(heat.timer.summary(),'\n')
-        # print(heat.B.timer.summary(),'\n')
-        # heat.plot_eta()
         logger.print_history()
 
-
+    # print(f"{heat.discs[-1]=}")
+    if info.success:
+        heat.plot_solution(xs)
+    else:
+        disc = heat.discs[-1]
+        heat.plot_solution(u=getattr(disc, "u0", xs), disc=disc)
 
 #------------------------------------------------------------------
-linear_example_by_newton()
+# linear_example()
+
+one_level=False
+if one_level:
+    from FEM2D.models.newton_driver_one_level import NewtonDriverOneLevel as NewtonDriver
+else:
+    from FEM2D.models.newton_driver_afem import NewtonDriverAFEM as NewtonDriver
+newton(NewtonDriver)
