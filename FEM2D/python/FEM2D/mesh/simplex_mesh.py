@@ -2,11 +2,10 @@
 import numpy as np
 from scipy import sparse
 
-from . import topology, geometry
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 
-from FEM2D.mesh.backend import backend
+from . import backend_dispatch
 
 @dataclass
 class MeshLabels:
@@ -71,7 +70,7 @@ class SimplexMesh:
             self.labels.names = labels.get("names", {})
 
         if rebuild:
-            self._rebuild()
+            self.rebuild_mesh()
 
         if check:
             self.check()
@@ -83,13 +82,11 @@ class SimplexMesh:
         return from_meshio(mesh)
 
     def refine_nvb(self, marked, debug=False, timer=None):
-        from . import refine_nvb
-        return refine_nvb.refine_nvb(
+        return backend_dispatch.refine_nvb(
             self,
             marked,
             debug=debug,
             timer=timer,
-            backend_name="cpp"
         )
 
     def construct_inner_faces(self):
@@ -99,16 +96,14 @@ class SimplexMesh:
     def finalize_after_topology_change(
             self,
             timer=None,
-            backend_name="cpp",
     ):
         self.geometry.points = np.asarray(self.geometry.points)
         self.topology.cells = np.asarray(self.topology.cells, dtype=int)
         self.nnodes = self.geometry.points.shape[0]
         self.ncells = self.topology.cells.shape[0]
         with timer("rebuild") if timer else nullcontext():
-            self._rebuild(
+            self.rebuild_mesh(
                 timer=timer,
-                backend_name=backend_name,
             )
         if hasattr(self, "cell_markers"):
             with timer("celllabels") if timer else nullcontext():
@@ -129,49 +124,9 @@ class SimplexMesh:
 
         return labels_cell
 
-    def _rebuild(self, timer=None, backend_name="cpp"):
+    def rebuild_mesh(self, timer=None):
+        backend_dispatch.rebuild_mesh(self, timer=timer)
 
-        if backend_name == "cpp" and self.dimension == 2 and backend is not None:
-            with timer("rebuild_mesh_2d") if timer else nullcontext():
-                r = backend.rebuild_mesh_2d(
-                    self.geometry.points,
-                    self.topology.cells,
-                )
-
-            self.topology.faces = r["faces"]
-            self.topology.faces_of_cells = r["faces_of_cells"]
-            self.topology.cells_of_faces = r["cells_of_faces"]
-
-            self.geometry.cell_centers = r["cell_centers"]
-            self.geometry.face_centers = r["face_centers"]
-            self.geometry.normals = r["normals"]
-            self.geometry.cell_volumes = r["cell_volumes"]
-            self.sigma = r["sigma"]
-
-            self.ncells = self.topology.cells.shape[0]
-            self.nfaces = self.topology.faces.shape[0]
-
-            self.edge2face = None
-            with timer("construct_inner_faces") if timer else nullcontext():
-                topology.construct_inner_faces(self)
-
-            return
-
-        # fallback Python path
-        with timer("construct_faces_from_cells") if timer else nullcontext():
-            topology.construct_faces_from_cells(
-                self,
-                build_edge2face=build_edge2face,
-            )
-
-        with timer("construct_centers_normals_volumes") if timer else nullcontext():
-            self.ncells = self.topology.cells.shape[0]
-            self.nfaces = self.topology.faces.shape[0]
-            geometry.construct_centers(self)
-            geometry.construct_normals_and_volumes(self)
-
-        with timer("construct_inner_faces") if timer else nullcontext():
-            topology.construct_inner_faces(self)
 
     def check(self):
         used = np.unique(self.topology.cells)

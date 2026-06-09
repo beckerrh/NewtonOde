@@ -44,24 +44,6 @@ class CompareMethods:
                     **scal,
                 }
 
-                # b = disc.computeRhs()
-                # A = disc.computeMatrix()
-                # u0 = disc.initsolution(b)
-                #
-                # m.As.append(A)
-                # m.B.update(A=A)
-                #
-                # x = m.B.solve(b=b, x0=u0)
-
-                # if hasattr(x, "parts"):
-                #     u = x
-                #     xf = x.flatten()
-                # else:
-                #     u = b.from_flat_like(x)
-                #     xf = np.asarray(x)
-                #
-                # bf = b.flatten()
-
                 post = disc.postProcess(u)
                 scal = post.get("scalar", {})
 
@@ -75,16 +57,12 @@ class CompareMethods:
                     "res": np.linalg.norm(A @ xf - bf),
                     **scal,
                 }
-                est_nl = disc.computeEstimator(u, linearized=False)
-                est_lin = disc.computeEstimator(u, linearized=True)
+                est = disc.computeEstimator(u)
 
-                row["eta"] = float(est_nl.eta2)
-                row["eta_cell_l2"] = float(np.linalg.norm(est_nl.eta))
-                row["eta_cell_max"] = float(np.max(est_nl.eta))
+                row["eta"] = float(est.eta)
+                row["eta_cell_l2"] = float(np.linalg.norm(est.eta2_cell))
+                row["eta_cell_max"] = float(np.max(est.eta2_cell))
 
-                row["eta_lin"] = float(est_lin.eta2)
-                row["eta_lin_cell_l2"] = float(np.linalg.norm(est_lin.eta))
-                row["eta_lin_cell_max"] = float(np.max(est_lin.eta))
                 if self.callback is not None:
                     self.callback(method=m, disc=disc, level=level, u=u, post=post, row=row)
 

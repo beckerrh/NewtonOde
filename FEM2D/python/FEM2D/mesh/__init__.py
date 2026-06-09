@@ -1,4 +1,5 @@
-from .simplex_mesh import SimplexMesh
+# from .simplex_mesh import SimplexMesh
 from .refinement_info import RefinementInfo
+from .simplex_mesh import SimplexMesh
 
-__all__ = ["SimplexMesh", "RefinementInfo"]
+__all__ = ["RefinementInfo", "SimplexMesh"]

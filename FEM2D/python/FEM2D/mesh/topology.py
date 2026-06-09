@@ -1,22 +1,8 @@
 import numpy as np
-
-from FEM2D.mesh.backend import backend
+# from FEM2D.mesh.backend import cpp_backend
 
 
 # ================================================================ #
-def construct_faces_from_cells(mesh, build_edge2face=True):
-
-    if backend is not None:
-        return construct_faces_from_cells_cpp(
-            mesh,
-            build_edge2face=build_edge2face,
-        )
-
-    return construct_faces_from_cells_python(
-        mesh,
-        build_edge2face=build_edge2face,
-    )
-
 def construct_inner_faces(mesh):
     mesh.topology.inner_faces = mesh.topology.cells_of_faces[:, 1] >= 0
     mesh.topology.cells_of_inner_faces = mesh.topology.cells_of_faces[mesh.topology.inner_faces]
@@ -137,24 +123,24 @@ def construct_faces_from_cells_python(mesh, build_edge2face=True):
     return faces, faces_of_cells, cells_of_faces
 
 # ================================================================ #
-def construct_faces_from_cells_cpp(mesh, build_edge2face=True):
-    r = backend.construct_faces_from_cells(
-        np.asarray(mesh.topology.cells, dtype=np.int64),
-        build_edge2face,
-    )
-
-    mesh.topology.faces = r["faces"]
-    mesh.topology.faces_of_cells = r["faces_of_cells"]
-    mesh.topology.cells_of_faces = r["cells_of_faces"]
-    mesh.nfaces = mesh.topology.faces.shape[0]
-
-    if build_edge2face:
-        mesh.edge2face = r["edge2face"]
-    else:
-        mesh.edge2face = None
-
-    return (
-        mesh.topology.faces,
-        mesh.topology.faces_of_cells,
-        mesh.topology.cells_of_faces,
-    )
+# def construct_faces_from_cells_cpp(mesh, build_edge2face=True):
+#     r = cpp_backend.construct_faces_from_cells(
+#         np.asarray(mesh.topology.cells, dtype=np.int64),
+#         build_edge2face,
+#     )
+#
+#     mesh.topology.faces = r["faces"]
+#     mesh.topology.faces_of_cells = r["faces_of_cells"]
+#     mesh.topology.cells_of_faces = r["cells_of_faces"]
+#     mesh.nfaces = mesh.topology.faces.shape[0]
+#
+#     if build_edge2face:
+#         mesh.edge2face = r["edge2face"]
+#     else:
+#         mesh.edge2face = None
+#
+#     return (
+#         mesh.topology.faces,
+#         mesh.topology.faces_of_cells,
+#         mesh.topology.cells_of_faces,
+#     )

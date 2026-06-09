@@ -1,6 +1,6 @@
 import pygmsh
 from .problemdata import ProblemData
-from ..mesh import SimplexMesh
+from ..mesh.simplex_mesh import SimplexMesh
 from ..mesh.boundary_geometry import CircleProjector
 from Utility.analyticalfunction import  AnalyticalFunction, analytical_solution
 

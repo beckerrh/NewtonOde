@@ -1,6 +1,22 @@
 import numpy as np
 
 
+# ====================================================================== #
+def correct_boundary_geometry(mesh_old, mesh_new):
+    projector = getattr(mesh_old.geometry, "boundary_projector", None)
+
+    if projector is None:
+        return mesh_new
+
+    mesh_new.geometry.boundary_projector = projector
+    mesh_new.geometry.points[:] = projector.correct_points(
+        mesh_new,
+        mesh_new.geometry.points,
+    )
+    mesh_new.rebuild_mesh()
+
+    return mesh_new
+
 def construct_centers(mesh):
     mesh.geometry.cell_centers = mesh.geometry.points[mesh.topology.cells].mean(axis=1)
     mesh.geometry.face_centers = mesh.geometry.points[mesh.topology.faces].mean(axis=1)
@@ -21,7 +37,7 @@ def construct_normals_and_volumes(mesh):
             axis=-1,
         )
         dx1 = x[elem[:, 1]] - x[elem[:, 0]]
-        mesh.self.mesh.geometry.cell_volumes = np.abs(dx1)
+        mesh.geometry.cell_volumes = np.abs(dx1)
 
     elif mesh.dimension == 2:
         x, y = points[:, 0], points[:, 1]
@@ -66,7 +82,7 @@ def construct_normals_and_volumes(mesh):
         dz2 = z[elem[:, 2]] - z[elem[:, 0]]
         dz3 = z[elem[:, 3]] - z[elem[:, 0]]
 
-        mesh.self.mesh.geometry.cell_volumes = (1.0 / 6.0) * np.abs(
+        mesh.geometry.cell_volumes = (1.0 / 6.0) * np.abs(
             dx1 * (dy2 * dz3 - dy3 * dz2)
             - dx2 * (dy1 * dz3 - dy3 * dz1)
             + dx3 * (dy1 * dz2 - dy2 * dz1)

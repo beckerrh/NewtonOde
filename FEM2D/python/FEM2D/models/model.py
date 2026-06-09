@@ -297,8 +297,8 @@ class Model:
 
         if u is None:
             # linear/affine test point
-            rhs0 = disc.computeRhs()
-            u = disc.initsolution(rhs0)
+            # rhs0 = disc.computeRhs()
+            u = disc.initial_guess()
 
         A = disc.computeMatrix(u)
 
@@ -306,7 +306,7 @@ class Model:
             # affine residual equation: J(u) x = b_affine
             rhs = disc.computeRhs()
 
-        u0 = disc.initsolution(rhs)
+        u0 = disc.initial_guess()
 
         if store_matrix:
             self.As.append(A)
