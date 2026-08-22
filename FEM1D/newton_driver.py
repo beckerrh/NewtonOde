@@ -90,14 +90,15 @@ class NewtonDriver:
             self.logger_mesh.print()
             if result.deta_global <= aimed:
                 self.logger_newton.update(N=len(self.mesh), meshiter=iter_mesh)
-                return SimpleNamespace(dx=p, dx_norm=pnorm, x=x, success=True)
+                return SimpleNamespace(dx=p, dx_norm=pnorm, x=x, state=state,success=True)
 
             mesh_new, refinfo = mesh1d.adapt_mesh(self.mesh, result.deta, theta=self.theta)
             x = self.solver.interpolate_to_new_mesh(self.mesh, x, mesh_new, refinfo)
             x.p1[0, :] = self.app.uL
             x.p1[-1, :] = self.app.uR
             self.mesh = mesh_new
-        return SimpleNamespace(dx=p, dx_norm=pnorm, x=x, success=False)
+            state = self.evaluate(x)
+        return SimpleNamespace(dx=p, dx_norm=pnorm, x=x, state=state, success=False)
     def call_back(self, iterdata, accepted):
         import matplotlib.pyplot as plt
         uh = accepted.x.p1
@@ -145,10 +146,14 @@ if __name__ == "__main__":
     # app = elliptic_examples.PotentialReactionSystem(rho=10)
     # app = elliptic_examples.ScalarCubic(A=1, eps=0.01, rho=10000)
     # app = elliptic_examples.SimpleMonotone2()
-    app = elliptic_examples.LayeredMonotone2()
+    # app = elliptic_examples.LayeredMonotone2()
+    app = elliptic_examples.ScalarDoubleWellInterface(rho=0.5,
+    a_left=0.1,
+    a_right=0.05,
+    interface=0.5,)
 
-    korder, rtol = 2, 1e-10
-    # korder, rtol = 1, 1e-8
+    # korder, rtol = 2, 1e-10
+    korder, rtol = 1, 1e-8
     sdata = newtondata.StoppingParamaters(maxiter=50, rtol=rtol, forcing_kappa=0.5)
     driver = NewtonDriver(app, n0=11, korder=korder)
     x0 = driver.initial_guess()

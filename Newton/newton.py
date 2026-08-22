@@ -178,6 +178,8 @@ class Newton:
 
         step0 = self.build_step(x, state, info)
 
+        base_state = getattr(step0, "state", state)
+
         if not getattr(step0, "success", True):
             accepted = SimpleNamespace(
                 success=False,
@@ -191,14 +193,20 @@ class Newton:
             return step0, accepted
 
         accepted = self.globalization.accept(
-            state=state,
+            state=base_state,
             step=step0,
             solver=self,
             info=info,
         )
+        # accepted = self.globalization.accept(
+        #     state=state,
+        #     step=step0,
+        #     solver=self,
+        #     info=info,
+        # )
         step = getattr(accepted, "step", step0)
 
-        if self.acceptable_step(state, step, accepted):
+        if self.acceptable_step(base_state, step, accepted):
             return step, accepted
 
         if hasattr(self.nd, "compute_gradient_step"):

@@ -15,6 +15,23 @@ class ArmijoGlobalization:
 
     def accept(self, state, step, solver, info):
         x = step.x
+
+        state_x = solver.nd.evaluate(x)
+
+        print(
+            "\nARMIJO BASE CHECK",
+            "passed =", state.meritvalue,
+            "eval(step.x) =", state_x.meritvalue,
+            "ratio =", state_x.meritvalue / state.meritvalue,
+        )
+
+        if abs(state_x.meritvalue - state.meritvalue) > 1e-10 * max(1.0, abs(state.meritvalue)):
+            raise RuntimeError(
+                "Armijo inconsistency: "
+                f"state.meritvalue={state.meritvalue}, "
+                f"evaluate(step.x).meritvalue={state_x.meritvalue}"
+            )
+
         alpha = 1.0
 
         phi0 = state.meritvalue

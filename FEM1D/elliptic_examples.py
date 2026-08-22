@@ -245,6 +245,96 @@ class InteriorLayerVariableAlpha(EllipticExample):
         ax = self.diffusion_coef_x(x)
         return -ax[..., None] * self.dsolution(x) - a[..., None] * self.ddsolution(x)
 
+#-------------------------------------------------------------
+class ScalarDoubleWellInterface(EllipticExample):
+    """
+    Scalar double-well problem with discontinuous diffusion:
+
+        -(a(x) u')' + rho (u^3 - u) = 0
+            in (0, 1),
+
+        u(0) = -1,
+        u(1) =  1.
+
+    The diffusion coefficient is piecewise constant:
+
+        a(x) = a_left   for x < interface,
+             = a_right  for x > interface.
+    """
+
+    def __init__(
+        self,
+        rho=0.25,
+        a_left=1.0,
+        a_right=0.05,
+        interface=0.5,
+    ):
+        self.rho = float(rho)
+        self.a_left = float(a_left)
+        self.a_right = float(a_right)
+        self.interface = float(interface)
+
+        if self.a_left <= 0.0 or self.a_right <= 0.0:
+            raise ValueError("Diffusion coefficients must be positive.")
+
+        # Sufficient strong-monotonicity condition on (0,1).
+        # a_min = min(self.a_left, self.a_right)
+        # rho_max = np.pi**2 * a_min
+        #
+        # if self.rho >= rho_max:
+        #     raise ValueError(
+        #         "Strong monotonicity requires "
+        #         f"rho < pi^2*a_min = {rho_max:.6g}; "
+        #         f"received rho={self.rho:.6g}."
+        #     )
+
+        super().__init__(
+            x0=0.0,
+            x1=1.0,
+            uL=np.array([-1.5]),
+            uR=np.array([1.5]),
+        )
+
+    # ---------------------------------------------------------
+    # Discontinuous diffusion
+    # ---------------------------------------------------------
+
+    def diffusion_coef(self, x):
+        x = np.asarray(x)
+
+        return np.where(
+            x < self.interface,
+            self.a_left,
+            self.a_right,
+        )
+
+    def diffusion_coef_x(self, x):
+        """
+        Classical derivative inside each subdomain.
+
+        The distributional contribution at the interface is handled
+        through the flux jump in the residual estimator.
+        """
+        return np.zeros_like(x, dtype=float)
+
+    # ---------------------------------------------------------
+    # Double-well reaction
+    # ---------------------------------------------------------
+
+    def reaction(self, u):
+        return self.rho * (u**3 - u)
+
+    def reaction_d(self, u):
+        return self.rho * (3.0 * u**2 - 1.0)
+
+    def f(self, x, u):
+        # -(a u')' = f(x,u)
+        # gives -(a u')' + reaction(u) = 0.
+        return -self.reaction(u)
+
+    def df_du(self, x, u):
+        return -self.reaction_d(u)
+
 # -------------------------------------------------------------
 class ScalarCubic(EllipticExample):
     def __init__(self, rho=10, A=2.0, xmid=0.37, eps=0.01):
